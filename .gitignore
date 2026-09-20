@@ -1,0 +1,16 @@
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Laufzeit-Artefakte
+plantuml.jar
+uploads/
+preview/
+
+# Windows ADS-Marker (von Dateien aus der WSL-Umgebung)
+*:Zone.Identifier
