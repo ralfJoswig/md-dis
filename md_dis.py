@@ -557,8 +557,12 @@ class MarkdownViewer(QMainWindow):
 
         self.web_view = QWebEngineView()
         self.web_view.setPage(ExternalLinkPage(self, self.web_view))
+        # Zoom wirkt direkt auf die Ansicht – kein Neurendern nötig
+        self.web_view.loadFinished.connect(lambda _ok: self.web_view.setZoomFactor(self.zoom_level))
         settings = self.web_view.settings()
-        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+        # Kein JS nötig (Diagramme kommen als fertiges SVG) – verhindert, dass
+        # Skripte aus fremden .md-Dateien lokale Dateien lesen und ausleiten
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, False)
 
         self.stack.addWidget(self.web_view)
 
@@ -755,7 +759,7 @@ class MarkdownViewer(QMainWindow):
         md_text = HELP_MARKDOWN
         for token, value in status.items():
             md_text = md_text.replace(token, value)
-        html = markdown_to_html(md_text, self.dark_mode, self.zoom_level)
+        html = markdown_to_html(md_text, self.dark_mode)
         self._ensure_web_view()
         self.web_view.setHtml(html)
         self.stack.setCurrentWidget(self.web_view)
@@ -934,7 +938,7 @@ class MarkdownViewer(QMainWindow):
         self.statusBar().showMessage("Rendere Markdown...")
         QApplication.processEvents()
 
-        html = markdown_to_html(md_text, self.dark_mode, self.zoom_level,
+        html = markdown_to_html(md_text, self.dark_mode,
                                  progress_callback=on_plantuml_progress)
         self._ensure_web_view()
         if self.web_view is not None:
@@ -1055,15 +1059,19 @@ class MarkdownViewer(QMainWindow):
 
     def _zoom_in(self):
         self.zoom_level = min(self.zoom_level + 0.1, 3.0)
-        self._reload_current()
+        self._apply_zoom()
 
     def _zoom_out(self):
         self.zoom_level = max(self.zoom_level - 0.1, 0.5)
-        self._reload_current()
+        self._apply_zoom()
 
     def _zoom_reset(self):
         self.zoom_level = 1.0
-        self._reload_current()
+        self._apply_zoom()
+
+    def _apply_zoom(self):
+        if self.web_view is not None:
+            self.web_view.setZoomFactor(self.zoom_level)
 
     def _toggle_theme(self):
         self.dark_mode = not self.dark_mode

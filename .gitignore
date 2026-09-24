@@ -14,3 +14,6 @@ preview/
 
 # Windows ADS-Marker (von Dateien aus der WSL-Umgebung)
 *:Zone.Identifier
+
+# Virtuelle Umgebung
+.venv/

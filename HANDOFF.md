@@ -10,10 +10,10 @@ mit **zwei Build-Varianten**:
 
 Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 
-## Architektur / Dateien (Projektwurzel `\\wsl.localhost\Ubuntu\home\ralf\Coding\md-dis`)
+## Architektur / Dateien (Projektwurzel `C:\SAP\ClaudeCode\Coding\md-dis`, Git-Repo `github.com/ralfJoswig/md-dis`)
 | Datei | Rolle |
 |---|---|
-| `md_render.py` | **Qt-freier gemeinsamer Render-Kern** (VERSION="1.0.0", HTML_TEMPLATE, CSS_LIGHT/DARK, `markdown_to_html`, PlantUML/Mermaid-Finder+Renderer, Frontmatter). Importiert KEIN Qt. |
+| `md_render.py` | **Qt-freier gemeinsamer Render-Kern** (VERSION="1.1.0", HTML_TEMPLATE, CSS_LIGHT/DARK, `markdown_to_html`, PlantUML/Mermaid-Finder+Renderer, Frontmatter). Importiert KEIN Qt. |
 | `md_dis.py` | GUI-Client (ca. 47 KB / 1114 Zeilen); importiert nur noch `VERSION, get_plantuml_jar_path, get_base_dir, check_java_available, download_plantuml_jar, find_mmdc, markdown_to_html` aus `md_render`. |
 | `md_dis_server.py` | HTTP-Server (ca. 18 KB / ~490 Zeilen, `http.server.ThreadingHTTPServer`). |
 | `build.py` | PyInstaller: `python build.py` → GUI, `python build.py --server` → Server, `--clean` löscht build/dist/Specs. Entfernt vor jedem Build das jeweilige Ziel-Dist (verhindert „not empty“-Fehler). |
@@ -26,7 +26,20 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
   - `GET /<pfad>.md` → gerendertes HTML (Toolbar: Index/Link je nach Redirect + „Hochladen“ + „Rohdaten“; Watch-Skript bei `--watch`).
   - `GET /raw/<pfad>` (`text/plain`), `GET /poll?path=` (mtime_ns-Stempel), statische Dateien (mimetypes).
   - **Upload (neu):** `GET /upload` → Formular; `POST /upload` (multipart/form-data, stdlib-only-Parser, kein `cgi` – in Py3.13 entfernt) → speichert unter `<Root>/uploads/<bereinigter Name>`, 303-Redirect auf Anzeige. Schutz: nur `.md/.markdown` (sonst 400), Dateiname gesäubert (Postfix `_sanitize_filename`), 10-MB-Limit (413), `resolve_within_root` blockiert Traversal.
-- Cache in-memory, Schlüssel (abspath, mtime_ns, dark, zoom). 500-Handler loggt Traceback.
+- Cache in-memory, ein Eintrag pro Datei (abspath → (mtime_ns, html)), wird bei Änderung überschrieben. 500-Handler loggt Traceback.
+- Sicherheit: alle Antworten mit `Content-Security-Policy` (`script-src 'self'`) + `nosniff`; Watch-Skript kommt extern über `GET /watch.js` (Pfad per `data-path`). Frontmatter, Diagramm-Fehlerausgaben und Index-Dateinamen werden HTML-maskiert. Rohes HTML im Markdown bleibt erlaubt, Skripte darin blockiert die CSP.
+- Ausgeliefert werden nur Markdown und Bilder (png/jpg/jpeg/gif/svg/webp); `/raw/` nur für Markdown. Pfade mit Dot-Segment (`.git`, `.venv`, `.env`) → 404, Index überspringt sie.
+- Bei Loopback-Bindung nur `Host: localhost|127.0.0.1|[::1]:<port>` (DNS-Rebinding) → sonst 403; `POST` mit fremdem `Origin` → 403 (CSRF). 500 ohne Details an den Client.
+- PlantUML rendert im Server mit `-DPLANTUML_SECURITY_PROFILE=SANDBOX` (`markdown_to_html(..., sandbox=True)`), kein `!include` lokaler Dateien.
+
+## Render-Kern (`md_render.py`)
+- SVG-Cache (max. 256, Schlüssel art/sandbox/code, thread-safe) – Theme-Wechsel, F5, Bearbeiten→Anzeigen rendern Diagramme nicht neu.
+- PlantUML: alle Blöcke eines Dokuments in **einem** JVM-Aufruf (`-charset UTF-8`); Mermaid: bis zu 4 `mmdc` parallel.
+- Auto-Download von `plantuml.jar` höchstens einmal pro Prozess; `find_java`/`find_mmdc` merken Treffer.
+
+## Desktop-App
+- JavaScript in der Vorschau aus (fremde `.md` können keine lokalen Dateien lesen/ausleiten).
+- Zoom über `setZoomFactor` ohne Neurendern.
 - Logging: `sys.stdout/.stderr.reconfigure(line_buffering=True)` in `main()` – sonst leere Redirect-Logs.
 - Banner zeigt: Wurzel, bei `--file` `Datei: X (direkte Anzeige)`, Theme, Zoom, Watch.
 
@@ -36,7 +49,7 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 - **Server-Frozen** `dist/md-dis-server/` (84 MB): **aktuellster Build** – enthält `--file`-Redirect UND Browser-Upload; per HTTP verifiziert (Upload 303+Render 200, PlantUML→SVG mit echtem JAR, Dark, Traversal-404, Watch/Poll, raw).
   - Hinweis: Wechsel 55→84 MB durch erneuten COLLECT/Analysis-Lauf; unkritisch.
 - Source-Mode Tests laufen über `Start-Process python … --port <n>` + `curl.exe` (Achtung: bei `RedirectStandardOutput` werden Konsol-Ausgaben nur bei line-buffering sichtbar).
-- Kein Git-Repo im Projekt; kein automatisches Test-Framework – Verifikation manuell über Skripte im Smoke-Ordner.
+- Kein automatisches Test-Framework – Verifikation manuell über Skripte im Smoke-Ordner.
 
 ## Wichtige Regeln & Fallstricke
 1. **Build nur mit Windows-Python** (py launcher aus `C:\Users\…\PythonSoftwareFoundation…`), workdir = UNC-Projektordner. WSL-Python (`wsl -d Ubuntu -- python3 -m py_compile`) nur für Syntaxcheck.
@@ -48,10 +61,10 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 7. Uploads überschreiben gleichnamige Dateien in `uploads/` (kein Timestamp) – gewollt für Vorschau.
 
 ## Umgebung / Pfade
-- Projekt UNC: `\\wsl.localhost\Ubuntu\home\ralf\Coding\md-dis` (= WSL `/home/ralf/Coding/md-dis`)
-- Smoke: `C:\Users\ralfj\AppData\Local\Temp\opencode\smoke\` (beide Frozen-Ordner, echtes `plantuml.jar`, `einfach.md`, `plantuml.md`, `mermaid.md`, `help_preview.html`)
-- Test-Skripte: `server_test.ps1`, `frozen_test.ps1`, `ui_dump.ps1` in `…\Temp\opencode\`
-- Alter/veralteter Handoff: `…\Temp\opencode\HANDOFF-md-dis.md` → **dieses Dokument ersetzt ihn.**
+- Projekt: `C:\SAP\ClaudeCode\Coding\md-dis` (Git-Clone); früherer Ort war `\\wsl.localhost\Ubuntu\home\ralf\Coding\md-dis`.
+- Python-Umgebung: `.venv\` im Projekt (`.\.venv\Scripts\python.exe`), Abhängigkeiten aus `requirements.txt`.
+- Smoke-Ordner und Test-Skripte (`server_test.ps1`, `frozen_test.ps1`, `ui_dump.ps1`) lagen unter `…\Temp\opencode\` der alten Umgebung und sind **nicht im Repo** – hier nicht vorhanden.
+- Alter/veralteter Handoff: `HANDOFF-md-dis.md` → **dieses Dokument ersetzt ihn.**
 
 ## Nächste Schritte (Vorschläge)
 1. Optional: automatisierten Regressionstest als Skript (Start-Server → curl-Checks → Upload → Watch) ins Repo legen.

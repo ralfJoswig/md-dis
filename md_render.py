@@ -5,19 +5,22 @@ Wird sowohl von der Desktop-App (md_dis.py) als auch vom HTTP-Server
 (md_dis_server.py) verwendet.
 """
 
+import html
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.error
+import threading
 import urllib.request
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import markdown
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -257,7 +260,21 @@ def get_base_dir() -> Path:
     return Path(__file__).parent
 
 
+# Gefundene Programmpfade (nur Treffer, damit eine spätere Installation erkannt wird)
+_found_tools = {}
+
+
 def find_java() -> str | None:
+    """Locate a usable java executable (cached after the first hit)."""
+    if "java" not in _found_tools:
+        path = _locate_java()
+        if not path:
+            return None
+        _found_tools["java"] = path
+    return _found_tools["java"]
+
+
+def _locate_java() -> str | None:
     """Locate a usable java executable: PATH, JAVA_HOME, and common install dirs."""
     candidate = shutil.which("java")
     if candidate:
@@ -323,19 +340,11 @@ def download_plantuml_jar(progress_callback=None) -> bool:
         if progress_callback:
             progress_callback(f"Lade plantuml.jar herunter... (Ziel: {target_path})")
 
-        import ssl
         req = urllib.request.Request(
             jar_url,
-            headers={"User-Agent": "md-dis/1.0"}
+            headers={"User-Agent": f"md-dis/{VERSION}"}
         )
-        # Try with default SSL first, fall back to unverified context
-        try:
-            resp = urllib.request.urlopen(req, timeout=120)
-        except (urllib.error.URLError, ssl.SSLError):
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            resp = urllib.request.urlopen(req, timeout=120, context=ctx)
+        resp = urllib.request.urlopen(req, timeout=120)
 
         data = resp.read()
         resp.close()
@@ -358,75 +367,90 @@ def download_plantuml_jar(progress_callback=None) -> bool:
         return False
 
 
-def render_plantuml(code: str) -> str:
-    """Render PlantUML code to SVG using local plantuml.jar."""
+def _diagram_error(msg: str, code: str) -> str:
+    """Error box plus the diagram source (msg must already be HTML-safe)."""
+    return f'<pre style="color:red;">{msg}</pre><pre>{html.escape(code)}</pre>'
+
+
+# Auto-Download von plantuml.jar höchstens einmal pro Prozess versuchen
+_auto_download_tried = False
+
+
+def _plantuml_batch(codes: list[str], sandbox: bool = False) -> list[tuple[str, bool]]:
+    """Render several PlantUML diagrams with a single JVM start.
+
+    Returns one (html, ok) tuple per input; ok is False for error output.
+    sandbox=True forbids !include & co. from reading local files or URLs.
+    """
+    global _auto_download_tried
     jar_path = get_plantuml_jar_path()
-    if not jar_path:
-        # Try auto-download (silently)
+    if not jar_path and not _auto_download_tried:
+        _auto_download_tried = True
         download_plantuml_jar()
         jar_path = get_plantuml_jar_path()
     if not jar_path:
-        return f'<pre style="color:red;">PlantUML: plantuml.jar nicht gefunden im App-Verzeichnis ({get_base_dir()}).</pre><pre>{code}</pre>'
+        msg = f"PlantUML: plantuml.jar nicht gefunden im App-Verzeichnis ({html.escape(str(get_base_dir()))})."
+        return [(_diagram_error(msg, c), False) for c in codes]
 
     java = find_java()
     if not java:
-        return f'<pre style="color:red;">PlantUML: Java nicht gefunden. Bitte Java installieren.</pre><pre>{code}</pre>'
+        return [(_diagram_error("PlantUML: Java nicht gefunden. Bitte Java installieren.", c), False) for c in codes]
 
+    cmd = [java]
+    if sandbox:
+        cmd.append("-DPLANTUML_SECURITY_PROFILE=SANDBOX")
     try:
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.puml', delete=False, encoding='utf-8') as f:
-            f.write(code)
-            input_path = f.name
-        output_path = input_path.replace('.puml', '.svg')
+        with tempfile.TemporaryDirectory() as tmp:
+            inputs = []
+            for i, code in enumerate(codes):
+                path = os.path.join(tmp, f"{i}.puml")
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(code)
+                inputs.append(path)
 
-        kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-        result = subprocess.run(
-            [java, "-jar", jar_path, "-tsvg", input_path],
-            capture_output=True, text=True, timeout=30,
-            stdin=subprocess.DEVNULL,
-            **kwargs
-        )
+            kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+            result = subprocess.run(
+                cmd + ["-jar", jar_path, "-tsvg", "-charset", "UTF-8"] + inputs,
+                capture_output=True, text=True, timeout=30 + 10 * len(codes),
+                stdin=subprocess.DEVNULL,
+                **kwargs
+            )
 
-        if os.path.exists(output_path):
-            with open(output_path, 'r', encoding='utf-8') as f:
-                svg_content = f.read()
-            os.unlink(output_path)
-            os.unlink(input_path)
-            return svg_content
-        else:
-            os.unlink(input_path)
-            error_msg = result.stderr or result.stdout or "Unbekannter Fehler"
-            return f'<pre style="color:red;">PlantUML-Fehler:<br>{error_msg}</pre><pre>{code}</pre>'
+            results = []
+            for i, code in enumerate(codes):
+                output_path = os.path.join(tmp, f"{i}.svg")
+                if os.path.exists(output_path):
+                    with open(output_path, 'r', encoding='utf-8') as f:
+                        results.append((f.read(), True))
+                else:
+                    error_msg = result.stderr or result.stdout or "Unbekannter Fehler"
+                    results.append((_diagram_error(f"PlantUML-Fehler:<br>{html.escape(error_msg)}", code), False))
+            return results
 
     except subprocess.TimeoutExpired:
-        return f'<pre style="color:red;">PlantUML: Timeout beim Rendern.</pre><pre>{code}</pre>'
+        return [(_diagram_error("PlantUML: Timeout beim Rendern.", c), False) for c in codes]
     except FileNotFoundError:
-        return f'<pre style="color:red;">PlantUML: Java nicht gefunden. Bitte Java installieren.</pre><pre>{code}</pre>'
+        return [(_diagram_error("PlantUML: Java nicht gefunden. Bitte Java installieren.", c), False) for c in codes]
     except Exception as e:
-        return f'<pre style="color:red;">PlantUML-Fehler: {e}</pre><pre>{code}</pre>'
+        return [(_diagram_error(f"PlantUML-Fehler: {html.escape(str(e))}", c), False) for c in codes]
 
 
-def extract_and_replace_plantuml(html: str) -> str:
-    """Find PlantUML code blocks and replace them with rendered SVG.
-
-    Handles both raw markdown and HTML-converted code blocks.
-    """
-    raw_pattern = r'```plantuml\s*\n(.*?)\n```'
-
-    html_pattern = r'<pre><code class="language-plantuml">(.*?)</code></pre>'
-
-    def replace_match(match):
-        code = match.group(1)
-        code = code.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
-        code = code.replace('&#39;', "'").replace('&quot;', '"')
-        return render_plantuml(code)
-
-    html = re.sub(raw_pattern, replace_match, html, flags=re.DOTALL)
-    html = re.sub(html_pattern, replace_match, html, flags=re.DOTALL)
-
-    return html
+def render_plantuml(code: str, sandbox: bool = False) -> str:
+    """Render PlantUML code to SVG using local plantuml.jar."""
+    return _plantuml_batch([code], sandbox)[0][0]
 
 
 def find_mmdc():
+    """Find mmdc executable (cached after the first hit)."""
+    if "mmdc" not in _found_tools:
+        path = _locate_mmdc()
+        if not path:
+            return None
+        _found_tools["mmdc"] = path
+    return _found_tools["mmdc"]
+
+
+def _locate_mmdc():
     """Find mmdc executable."""
     for name in ("mmdc", "mmdc.cmd", "mmdc.bat"):
         path = shutil.which(name)
@@ -440,11 +464,11 @@ def find_mmdc():
     return None
 
 
-def render_mermaid(code: str) -> str:
-    """Render Mermaid code to SVG using local mmdc (mermaid-cli)."""
+def _mermaid(code: str) -> tuple[str, bool]:
+    """Render Mermaid code to SVG using local mmdc (mermaid-cli). Returns (html, ok)."""
     mmdc_path = find_mmdc()
     if not mmdc_path:
-        return f'<pre style="color:red;">Mermaid: mmdc nicht gefunden. Bitte installieren: npm install -g @mermaid-js/mermaid-cli</pre><pre>{code}</pre>'
+        return _diagram_error("Mermaid: mmdc nicht gefunden. Bitte installieren: npm install -g @mermaid-js/mermaid-cli", code), False
 
     try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.mmd', delete=False, encoding='utf-8') as f:
@@ -470,19 +494,24 @@ def render_mermaid(code: str) -> str:
                 svg_content = f.read()
             os.unlink(output_path)
             os.unlink(input_path)
-            return svg_content
+            return svg_content, True
         else:
             if os.path.exists(input_path):
                 os.unlink(input_path)
             error_msg = (result.stderr or result.stdout or b"Unbekannter Fehler").decode("utf-8", errors="replace")
-            return f'<pre style="color:red;">Mermaid-Fehler:<br>{error_msg}</pre><pre>{code}</pre>'
+            return _diagram_error(f"Mermaid-Fehler:<br>{html.escape(error_msg)}", code), False
 
     except subprocess.TimeoutExpired:
-        return f'<pre style="color:red;">Mermaid: Timeout beim Rendern.</pre><pre>{code}</pre>'
+        return _diagram_error("Mermaid: Timeout beim Rendern.", code), False
     except FileNotFoundError:
-        return f'<pre style="color:red;">Mermaid: mmdc nicht gefunden. Bitte installieren: npm install -g @mermaid-js/mermaid-cli</pre><pre>{code}</pre>'
+        return _diagram_error("Mermaid: mmdc nicht gefunden. Bitte installieren: npm install -g @mermaid-js/mermaid-cli", code), False
     except Exception as e:
-        return f'<pre style="color:red;">Mermaid-Fehler: {e}</pre><pre>{code}</pre>'
+        return _diagram_error(f"Mermaid-Fehler: {html.escape(str(e))}", code), False
+
+
+def render_mermaid(code: str) -> str:
+    """Render Mermaid code to SVG using local mmdc (mermaid-cli)."""
+    return _mermaid(code)[0]
 
 
 def strip_frontmatter(md_text: str) -> tuple[str, str]:
@@ -536,7 +565,7 @@ def render_frontmatter_html(frontmatter: str, dark_mode: bool = False) -> str:
             key = key.strip()
             value = value.strip().strip('"').strip("'")
             if key and value:
-                rows.append(f'<tr><td class="fm-key">{key}</td><td class="fm-value">{value}</td></tr>')
+                rows.append(f'<tr><td class="fm-key">{html.escape(key)}</td><td class="fm-value">{html.escape(value)}</td></tr>')
 
     if not rows:
         return ""
@@ -553,8 +582,34 @@ def render_frontmatter_html(frontmatter: str, dark_mode: bool = False) -> str:
 </div>'''
 
 
-def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 1.0, progress_callback=None) -> str:
-    """Convert markdown text to full HTML page."""
+# Cache fertiger Diagramm-SVGs (unabhängig von Theme/Zoom), Schlüssel (art, sandbox, code)
+SVG_CACHE_MAX = 256
+_svg_cache = OrderedDict()
+_svg_cache_lock = threading.Lock()
+
+
+def _cache_get(key):
+    with _svg_cache_lock:
+        svg = _svg_cache.get(key)
+        if svg is not None:
+            _svg_cache.move_to_end(key)
+        return svg
+
+
+def _cache_put(key, svg):
+    with _svg_cache_lock:
+        _svg_cache[key] = svg
+        _svg_cache.move_to_end(key)
+        while len(_svg_cache) > SVG_CACHE_MAX:
+            _svg_cache.popitem(last=False)
+
+
+def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 1.0, progress_callback=None,
+                     sandbox: bool = False) -> str:
+    """Convert markdown text to full HTML page.
+
+    sandbox=True renders PlantUML without access to local files/URLs (for untrusted input).
+    """
 
     # Strip YAML frontmatter if present
     frontmatter, md_text = strip_frontmatter(md_text)
@@ -598,22 +653,52 @@ def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 
     md = markdown.Markdown(extensions=extensions, extension_configs=extension_configs)
     content = md.convert(md_text)
 
-    # Replace placeholders with rendered PlantUML SVG
-    total = len(plantuml_blocks) + len(mermaid_blocks)
-    current = 0
+    # Diagramme rendern – bereits bekannte SVGs kommen aus dem Cache
+    rendered = {}
+    todo_plantuml = []
+    todo_mermaid = []
     for key, code in plantuml_blocks.items():
-        current += 1
-        if progress_callback and total > 0:
-            progress_callback(f"Rendere PlantUML ({current}/{total})...", current, total)
-        svg = render_plantuml(code)
-        content = content.replace(key, svg)
-
-    # Replace placeholders with rendered Mermaid SVG
+        svg = _cache_get(("plantuml", sandbox, code))
+        if svg is None:
+            todo_plantuml.append((key, code))
+        else:
+            rendered[key] = svg
     for key, code in mermaid_blocks.items():
-        current += 1
-        if progress_callback and total > 0:
-            progress_callback(f"Rendere Mermaid ({current}/{total})...", current, total)
-        svg = render_mermaid(code)
+        svg = _cache_get(("mermaid", False, code))
+        if svg is None:
+            todo_mermaid.append((key, code))
+        else:
+            rendered[key] = svg
+
+    total = len(todo_plantuml) + len(todo_mermaid)
+    current = 0
+
+    # PlantUML: alle Blöcke mit einem einzigen JVM-Start
+    if todo_plantuml:
+        if progress_callback:
+            progress_callback(f"Rendere PlantUML ({len(todo_plantuml)} Diagramme)...", current, total)
+        results = _plantuml_batch([code for _key, code in todo_plantuml], sandbox)
+        for (key, code), (svg, ok) in zip(todo_plantuml, results):
+            rendered[key] = svg
+            if ok:
+                _cache_put(("plantuml", sandbox, code), svg)
+        current += len(todo_plantuml)
+
+    # Mermaid: jeder mmdc-Aufruf startet einen Browser – parallel ausführen
+    if todo_mermaid:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {pool.submit(_mermaid, code): (key, code) for key, code in todo_mermaid}
+            for future in as_completed(futures):
+                key, code = futures[future]
+                svg, ok = future.result()
+                rendered[key] = svg
+                if ok:
+                    _cache_put(("mermaid", False, code), svg)
+                current += 1
+                if progress_callback:
+                    progress_callback(f"Rendere Mermaid ({current}/{total})...", current, total)
+
+    for key, svg in rendered.items():
         content = content.replace(key, svg)
 
     # Prepend frontmatter info box if present

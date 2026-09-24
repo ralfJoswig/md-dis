@@ -15,7 +15,6 @@ Browser eine .md-Datei an den Server schicken; sie wird unter
 """
 
 import argparse
-import json
 import mimetypes
 import os
 import re
@@ -24,12 +23,31 @@ import threading
 import time
 import traceback
 import urllib.parse
+from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from md_render import VERSION, markdown_to_html
 
 CONFIG = {}  # wird in main() gefüllt
+
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+       "img-src * data:; object-src 'none'; base-uri 'none'; form-action 'self'")
+
+WATCH_JS = """(function() {
+  var path = document.currentScript.dataset.path;
+  var first = null;
+  setInterval(function() {
+    fetch("/poll?path=" + encodeURIComponent(path))
+      .then(function(r) { if (r.ok) return r.text(); throw 0; })
+      .then(function(t) {
+        if (first === null) { first = t; return; }
+        if (t !== first) { location.reload(); }
+      })
+      .catch(function() {});
+  }, 1000);
+})();
+"""
 
 
 class MDDisServer(ThreadingHTTPServer):
@@ -47,13 +65,19 @@ def resolve_within_root(root: Path, rel: str) -> Path | None:
         return root
     target = (root / rel).resolve()
     root_real = root.resolve()
-    try:
-        os.path.commonpath([str(root_real), str(target)])
-    except ValueError:
-        return None
     if not str(target).startswith(str(root_real) + os.sep) and str(target) != str(root_real):
         return None
     return target
+
+
+MD_SUFFIXES = (".md", ".markdown")
+# Außer Markdown werden nur Bilder ausgeliefert (für eingebettete Grafiken)
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
+
+
+def _is_hidden(rel: str) -> bool:
+    """True, wenn ein Pfadsegment mit '.' beginnt (.git, .venv, .env, ...)."""
+    return any(part.startswith(".") for part in rel.replace("\\", "/").split("/") if part)
 
 
 def file_stamp(path: Path) -> str:
@@ -87,7 +111,6 @@ def _parse_multipart(content_type: str, body: bytes):
         if data.endswith(b"\r\n"):
             data = data[:-2]
         header_text = head.decode("utf-8", errors="replace")
-        fm = re.search(r'name="([^"]*)"', header_text)
         ff = re.search(r'filename="([^"]*)"', header_text, flags=re.IGNORECASE)
         if ff:
             return ff.group(1), data
@@ -97,7 +120,7 @@ def _parse_multipart(content_type: str, body: bytes):
 def _sanitize_filename(name: str) -> str:
     """Macht einen Dateinamen unbedenklich (nur Basisname, sichere Zeichen)."""
     name = name.replace("\\", "/").replace("/", " ").strip()
-    name = re.sub(r'[^\w\-. ]', "_", name, flags=re.UNICODE).strip()
+    name = re.sub(r'[^\w\-. ]', "_", name, flags=re.UNICODE).strip().lstrip(".")
     if not name:
         name = "upload.md"
     return name[:80]
@@ -112,6 +135,9 @@ class MDDisHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        # Nur Skripte vom eigenen Server (/watch.js) – blockiert Skripte aus Markdown-Inhalten
+        self.send_header("Content-Security-Policy", CSP)
         self.end_headers()
         self.wfile.write(body)
 
@@ -122,6 +148,21 @@ class MDDisHandler(BaseHTTPRequestHandler):
         elapsed = time.perf_counter() - start
         print(f"[md-dis-server] {self.command} {self.path} {status} ({elapsed:.2f}s)")
 
+    def _request_allowed(self) -> bool:
+        """Schutz vor DNS-Rebinding (Host) und CSRF (Origin bei POST)."""
+        allowed = CONFIG.get("allowed_hosts")
+        host = self.headers.get("Host", "")
+        if allowed is not None and host not in allowed:
+            return False
+        origin = self.headers.get("Origin")
+        if self.command == "POST" and origin is not None:
+            return urllib.parse.urlsplit(origin).netloc == host
+        return True
+
+    def _send_forbidden(self):
+        self._last_status = 403
+        self._send_text(403, "Zugriff verweigert")
+
     # ------------------------------------------------------------------- GET
     def do_GET(self):
         start = time.perf_counter()
@@ -129,7 +170,9 @@ class MDDisHandler(BaseHTTPRequestHandler):
         url_path = urllib.parse.unquote(parsed.path)
         query = urllib.parse.parse_qs(parsed.query)
         try:
-            if url_path == "/":
+            if not self._request_allowed():
+                self._send_forbidden()
+            elif url_path == "/":
                 redirect = CONFIG.get("redirect")
                 if redirect:
                     self._last_status = 302
@@ -143,13 +186,17 @@ class MDDisHandler(BaseHTTPRequestHandler):
                 self._handle_poll(query.get("path", [""])[0])
             elif url_path == "/upload":
                 self._handle_upload_page()
+            elif url_path == "/watch.js":
+                self._last_status = 200
+                self._send_text(200, WATCH_JS, "text/javascript; charset=utf-8")
             elif url_path.startswith("/raw/"):
                 self._handle_raw(url_path[len("/raw/"):])
             else:
                 self._handle_doc_or_static(url_path, start)
-        except Exception as e:  # pragma: no cover – letzter Notnagel
+        except Exception:  # pragma: no cover – letzter Notnagel
             traceback.print_exc()
-            self._send_text(500, f"Interner Fehler: {type(e).__name__}: {e}")
+            self._last_status = 500
+            self._send_text(500, "Interner Fehler")
         self._log_req(self._last_status, start)
 
     _last_status = 200
@@ -159,15 +206,17 @@ class MDDisHandler(BaseHTTPRequestHandler):
         start = time.perf_counter()
         parsed = urllib.parse.urlsplit(self.path)
         try:
-            if parsed.path == "/upload":
+            if not self._request_allowed():
+                self._send_forbidden()
+            elif parsed.path == "/upload":
                 self._handle_upload_post()
             else:
                 self._last_status = 404
                 self._send_text(404, "Unbekannte POST-Route")
-        except Exception as e:
+        except Exception:
             traceback.print_exc()
             self._last_status = 500
-            self._send_text(500, f"Interner Fehler: {type(e).__name__}: {e}")
+            self._send_text(500, "Interner Fehler")
         self._log_req(self._last_status, start)
 
     # --------------------------------------------------------- upload page
@@ -255,11 +304,13 @@ button {{ font-size: 1em; padding: 6px 16px; }}
     # ------------------------------------------------------------------ index
     def _handle_index(self):
         root = CONFIG["root"]
-        files = sorted(
-            f.relative_to(root).as_posix()
-            for f in root.rglob("*")
-            if f.is_file() and f.suffix.lower() in (".md", ".markdown")
-        )
+        files = []
+        for dirpath, dirs, names in os.walk(root):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]  # .git, .venv, ... nicht durchsuchen
+            for name in names:
+                if not name.startswith(".") and name.lower().endswith(MD_SUFFIXES):
+                    files.append((Path(dirpath) / name).relative_to(root).as_posix())
+        files.sort()
         dark = CONFIG["dark"]
         bg = "#0d1117" if dark else "#ffffff"
         fg = "#c9d1d9" if dark else "#24292e"
@@ -269,7 +320,7 @@ button {{ font-size: 1em; padding: 6px 16px; }}
         rows = []
         for rel in files:
             safe = urllib.parse.quote(rel)
-            rows.append(f'<li><a href="/{safe}">{rel}</a></li>')
+            rows.append(f'<li><a href="/{safe}">{escape(rel)}</a></li>')
         listing = "\n".join(rows) if rows else "<li><i>Keine Markdown-Dateien gefunden.</i></li>"
 
         html = f"""<!DOCTYPE html>
@@ -285,7 +336,7 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
 </head>
 <body>
 <h1>md-dis-server – Index</h1>
-<p>Wurzel: <code>{CONFIG['root']}</code> &mdash; Adresse: <code>{CONFIG['host']}:{CONFIG['port']}</code></p>
+<p>Wurzel: <code>{escape(str(CONFIG['root']))}</code> &mdash; Adresse: <code>{CONFIG['host']}:{CONFIG['port']}</code></p>
 <p><a href="/upload">&#128229; Datei hochladen</a></p>
 <ul>
 {listing}
@@ -299,7 +350,7 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
     # ------------------------------------------------------------------- poll
     def _handle_poll(self, rel: str):
         root = CONFIG["root"]
-        target = resolve_within_root(root, rel)
+        target = None if _is_hidden(rel) else resolve_within_root(root, rel)
         if not target or not target.is_file():
             self._last_status = 404
             self._send_text(404, "missing")
@@ -310,8 +361,8 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
     # ------------------------------------------------------------------- raw
     def _handle_raw(self, rel: str):
         root = CONFIG["root"]
-        target = resolve_within_root(root, rel)
-        if not target or not target.is_file():
+        target = None if _is_hidden(rel) else resolve_within_root(root, rel)
+        if not target or not target.is_file() or target.suffix.lower() not in MD_SUFFIXES:
             self._last_status = 404
             self._send_text(404, f"Datei nicht gefunden: {rel}")
             return
@@ -328,18 +379,20 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
     def _send_markdown(self, rel: str, target: Path, start_ns: int):
         dark = CONFIG["dark"]
         zoom = CONFIG["zoom"]
-        key = ("md", str(target.resolve()), start_ns, dark, zoom)
+        # Ein Eintrag pro Datei; ältere Stände werden überschrieben
+        key = str(target.resolve())
         server: MDDisServer = self.server
         with server._lock:
-            cached = server._cache.get(key)
+            entry = server._cache.get(key)
+        cached = entry[1] if entry and entry[0] == start_ns else None
         if cached is None:
             text = target.read_text(encoding="utf-8")
-            html = markdown_to_html(text, dark_mode=dark, zoom_level=zoom)
+            html = markdown_to_html(text, dark_mode=dark, zoom_level=zoom, sandbox=True)
             if CONFIG["watch"]:
                 html = _inject_watch(html, rel)
             html = _inject_toolbar(html, rel, dark)
             with server._lock:
-                server._cache[key] = html
+                server._cache[key] = (start_ns, html)
         else:
             html = cached
         self._last_status = 200
@@ -348,15 +401,18 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
     def _handle_doc_or_static(self, url_path: str, start: float):
         root = CONFIG["root"]
         rel = url_path.lstrip("/")
-        target = resolve_within_root(root, rel)
+        target = None if _is_hidden(rel) else resolve_within_root(root, rel)
         if not target:
             self._last_status = 404
             self._send_text(404, "Ungültiger Pfad")
             return
         if target.is_file():
-            if target.suffix.lower() in (".md", ".markdown"):
+            if target.suffix.lower() in MD_SUFFIXES:
                 stamp = int(target.stat().st_mtime_ns)
                 self._send_markdown(rel, target, stamp)
+            elif target.suffix.lower() not in IMAGE_SUFFIXES:
+                self._last_status = 404
+                self._send_text(404, f"Nicht gefunden: {url_path}")
             else:
                 try:
                     body = target.read_bytes()
@@ -401,24 +457,7 @@ def _inject_toolbar(html: str, rel: str, dark: bool) -> str:
 
 
 def _inject_watch(html: str, rel: str) -> str:
-    path_json = json.dumps(rel)
-    script = """
-<script>
-(function() {
-  var path = """ + path_json + """;
-  var first = null;
-  setInterval(function() {
-    fetch("/poll?path=" + encodeURIComponent(path))
-      .then(function(r) { if (r.ok) return r.text(); throw 0; })
-      .then(function(t) {
-        if (first === null) { first = t; return; }
-        if (t !== first) { location.reload(); }
-      })
-      .catch(function() {});
-  }, 1000);
-})();
-</script>
-"""
+    script = f'\n<script src="/watch.js" data-path="{escape(rel)}"></script>\n'
     return html.replace("</body>", script + "</body>", 1)
 
 
@@ -472,6 +511,9 @@ def main(argv=None):
         zoom=args.zoom,
         watch=args.watch,
         redirect=redirect,
+        # Bei Loopback-Bindung nur localhost-Host-Header zulassen (DNS-Rebinding)
+        allowed_hosts=({f"localhost:{args.port}", f"127.0.0.1:{args.port}", f"[::1]:{args.port}"}
+                       if args.host in ("127.0.0.1", "localhost", "::1") else None),
     )
 
     server = MDDisServer((args.host, args.port), MDDisHandler)
