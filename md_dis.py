@@ -6,17 +6,23 @@ import os
 from pathlib import Path
 
 from md_render import (
-    VERSION, get_plantuml_jar_path, get_base_dir, check_java_available,
-    download_plantuml_jar, find_mmdc, markdown_to_html,
+    VERSION, get_plantuml_jar_path, get_base_dir, get_jar_search_dirs,
+    check_java_available, download_plantuml_jar, find_mmdc, markdown_to_html,
 )
 
-from PyQt6.QtCore import Qt, QUrl, QTemporaryFile, QIODevice, QEvent, QTimer
-from PyQt6.QtGui import QAction, QKeySequence, QIcon, QShortcut, QDragEnterEvent, QDropEvent, QDesktopServices, QFont
+from PyQt6.QtCore import (
+    Qt, QUrl, QTemporaryFile, QIODevice, QEvent, QTimer, QSettings,
+    QMarginsF,
+)
+from PyQt6.QtGui import (
+    QAction, QKeySequence, QIcon, QShortcut, QDragEnterEvent, QDropEvent,
+    QDesktopServices, QFont, QPageLayout, QPageSize,
+)
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QToolBar, QDialog,
     QLabel, QStatusBar, QMessageBox, QProgressBar, QDialogButtonBox,
     QLineEdit, QWidget, QHBoxLayout, QVBoxLayout, QPlainTextEdit, QStackedWidget,
-    QMenu, QToolButton
+    QMenu, QToolButton, QComboBox, QRadioButton, QButtonGroup, QFormLayout
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage
@@ -107,356 +113,143 @@ md-dis selbst erwartet allerdings `mmdc` auf dem PATH (bzw. in `%APPDATA%\\npm\\
 
 ## PlantUML-Diagramme
 
-PlantUML nutzt eine `plantuml.jar` im Programmverzeichnis und benötigt **Java**. Fehlt die Jar-Datei, bietet md-dis an, sie automatisch herunterzuladen. Java ist separat zu installieren (siehe Status oben).
+PlantUML nutzt eine `plantuml.jar` und benötigt **Java**. Gesucht wird in dieser Reihenfolge: dem Verzeichnis der Programmdatei, dem Skriptverzeichnis (beim Start aus dem Quellcode) und `%LOCALAPPDATA%\\md-dis`; ein expliziter Pfad kann über die Umgebungsvariable `MD_DIS_PLANTUML_JAR` vorgegeben werden. Fehlt die JAR-Datei, bietet md-dis an, sie automatisch herunterzuladen – in das Programmverzeichnis, sofern beschreibbar, sonst in den Benutzer-Cache. Java ist separat zu installieren (siehe Status oben).
 
 [Zurück zur Vorschau](mddis://back)
 """
 
 
-GPL2_TEXT = """                    GNU GENERAL PUBLIC LICENSE
-                       Version 2, June 1991
+MIT_TEXT = """MIT License
 
- Copyright (C) 1989, 1991 Free Software Foundation, Inc.
-     51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
- Everyone is permitted to copy and distribute verbatim copies
- of this license document, but changing it is not allowed.
+Copyright (c) 2026 Ralf Joswig
 
-                            Preamble
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-  The licenses for most software are designed to take away your
-freedom to share and change it.  By contrast, the GNU General Public
-License is intended to guarantee your freedom to share and change free
-software--to make sure the software is free for all its users.  This
-General Public License applies to most of the Free Software
-Foundation's software and to any other program whose authors commit to
-using it.  (Some other Free Software Foundation software is covered by
-the GNU Library General Public License instead.)  You can apply it to
-your programs, too.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-  When we speak of free software, we are referring to freedom, not
-price.  Our General Public Licenses are designed to make sure that you
-have the freedom to distribute copies of free software (and charge for
-this service if you wish), that you receive source code or can get it
-if you want it, that you can change the software or use pieces of it
-in new free programs; and that you know you can do these things.
-
-  To protect your rights, we need to make restrictions that forbid
-anyone to deny you these rights or to ask you to surrender the rights.
-These restrictions translate to certain responsibilities for you if you
-distribute copies of the software, or if you modify it.
-
-  For example, if you distribute copies of such a program, whether
-gratis or for a fee, you must give the recipients all the rights that
-you have.  You must make sure that they, too, receive or can get the
-source code.  And you must show them these terms so they know their
-rights.
-
-  We protect your rights with two steps: (1) copyright the software,
-and (2) offer you this license which gives you legal permission to
-copy, distribute and/or modify the software.
-
-  Also, for each author's protection and ours, we want to make certain
-that everyone understands that there is no warranty for this free
-software.  If the software is modified by someone else and passed on, we
-want its recipients to know that what they have is not the original, so
-that any problems introduced by others will not reflect on the original
-authors' reputations.
-
-  Finally, any free program is threatened constantly by software
-patents.  We wish to avoid the danger that redistributors of a free
-program will individually obtain patent licenses, in effect making the
-program proprietary.  To prevent this, we have made it clear that any
-patent must be licensed for everyone's free use or not licensed at all.
-
-  The precise terms and conditions for copying, distribution and
-modification follow.
-
-                    GNU GENERAL PUBLIC LICENSE
-   TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
-
-  0. This License applies to any program or other work which contains
-a notice placed by the copyright holder saying it may be distributed
-under the terms of this General Public License.  The "Program", below,
-refers to any such program or work, and a "work based on the Program"
-means either the Program or any derivative work under copyright law:
-that is to say, a work containing the Program or a portion of it,
-either verbatim or with modifications and/or translated into another
-language.  (Hereinafter, translation is included without limitation in
-the term "modification".)  Each licensee is addressed as "you".
-
-Activities other than copying, distribution and modification are not
-covered by this License; they are outside its scope.  The act of
-running the Program is not restricted, and the output from the Program
-is covered only if its contents constitute a work based on the Program
-(independent of having been made by running the Program).  Whether that
-is true depends on what the Program does.
-
-  1. You may copy and distribute verbatim copies of the Program's
-source code as you receive it, in any medium, provided that you
-conspicuously and appropriately publish on each copy an appropriate
-copyright notice and disclaimer of warranty; keep intact all the
-notices that refer to this License and to the absence of any warranty;
-and give any other recipients of the Program a copy of this License
-along with the Program.
-
-You may charge a fee for the physical act of transferring a copy, and
-you may at your option offer warranty protection in exchange for a fee.
-
-  2. You may modify your copy or copies of the Program or any portion
-of it, thus forming a work based on the Program, and copy and
-distribute such modifications or work under the terms of Section 1
-above, provided that you also meet all of these conditions:
-
-    a) You must cause the modified files to carry prominent notices
-    stating that you changed the files and the date of any change.
-
-    b) You must cause any work that you distribute or publish, that in
-    whole or in part contains or is derived from the Program or any
-    part thereof, to be licensed as a whole at no charge to all third
-    parties under the terms of this License.
-
-    c) If the modified program normally reads commands interactively
-    when run, you must cause it, when started running for such
-    interactive use in the most ordinary way, to print or display an
-    announcement including an appropriate copyright notice and a
-    notice that there is no warranty (or else, saying that you provide
-    a warranty) and that users may redistribute the program under
-    these conditions, and telling the user how to view a copy of this
-    License.  (Exception: if the Program itself is interactive but
-    does not normally print such an announcement, your work based on
-    the Program is not required to print an announcement.)
-
-These requirements apply to the modified work as a whole.  If
-identifiable sections of that work are not derived from the Program,
-and can be reasonably considered independent and separate works in
-themselves, then this License, and its terms, do not apply to those
-sections when you distribute them as separate works.  But when you
-distribute the same sections as part of a whole which is a work based
-on the Program, the distribution of the whole must be on the terms of
-this License, whose permissions for other licensees extend to the
-entire whole, and thus to each and every part regardless of who wrote it.
-
-Thus, it is not the intent of this section to claim rights or contest
-your rights to work written entirely by you; rather, the intent is to
-exercise the right to control the distribution of derivative or
-collective works based on the Program.
-
-In addition, mere aggregation of another work not based on the Program
-with the Program (or with a work based on the Program) on a volume of
-a storage or distribution medium does not bring the other work under
-the scope of this License.
-
-  3. You may copy and distribute the Program (or a work based on it,
-under Section 2) in object code or executable form under the terms of
-Sections 1 and 2 above provided that you also do one of the following:
-
-    a) Accompany it with the complete corresponding machine-readable
-    source code, which must be distributed under the terms of Sections
-    1 and 2 above on a medium customarily used for software interchange;
-    or,
-
-    b) Accompany it with a written offer, valid for at least three
-    years, to give any third party, for a charge no more than your
-    cost of physically performing source distribution, a complete
-    machine-readable copy of the corresponding source code, to be
-    distributed under the terms of Sections 1 and 2 above on a medium
-    customarily used for software interchange; or,
-
-    c) Accompany it with the information you received as to the offer
-    to distribute corresponding source code.  (This alternative is
-    allowed only for noncommercial distribution and only if you
-    received the program in object code or executable form with such
-    an offer, in accord with Subsection b above.)
-
-The source code for a work means the preferred form of the work for
-making modifications to it.  For an executable work, complete source
-code means all the source code for all modules it contains, plus any
-associated interface definition files, plus the scripts used to
-control compilation and installation of the executable.  However, as a
-special exception, the source code distributed need not include
-anything that is normally distributed (in either source or binary
-form) with the major components (compiler, kernel, and so on) of the
-operating system on which the executable runs, unless that component
-itself accompanies the executable.
-
-If distribution of executable or object code is made by offering
-access to copy from a designated place, then offering equivalent
-access to copy the source code from the same place counts as
-distribution of the source code, even though third parties are not
-compelled to copy the source along with the object code.
-
-  4. You may not copy, modify, sublicense, or distribute the Program
-except as expressly provided under this License.  Any attempt
-otherwise to copy, modify, sublicense or distribute the Program is
-void, and will automatically terminate your rights under this License.
-However, parties who have received copies, or rights, from you under
-this License will not have their licenses terminated so long as such
-parties remain in full compliance.
-
-  5. You are not required to accept this License, since you have not
-signed it.  However, nothing else grants you permission to modify or
-distribute the Program or its derivative works.  These actions are
-prohibited by law if you do not accept this License.  Therefore, by
-modifying or distributing the Program (or any work based on the
-Program), you indicate your acceptance of this License to do so, and
-all its terms and conditions for copying, distributing or modifying
-the Program or works based on it.
-
-  6. Each time you redistribute the Program (or any work based on the
-Program), the recipient automatically receives a license from the
-original licensor to copy, distribute or modify the Program subject to
-these terms and conditions.  You may not impose any further
-restrictions on the recipients' exercise of the rights granted herein.
-You are not responsible for enforcing compliance by third parties to
-this License.
-
-  7. If, as a consequence of a court judgment or allegation of patent
-infringement or for any other reason (not limited to patent issues),
-conditions are imposed on you (whether by court order, agreement or
-otherwise) that contradict the conditions of this License, they do not
-excuse you from the conditions of this License.  If you cannot
-distribute so as to satisfy simultaneously your obligations under this
-License and any other pertinent obligations, then as a consequence you
-may not distribute the Program at all.  For example, if a patent
-license would not permit royalty-free redistribution of the Program by
-all those who receive copies directly or indirectly through you, then
-the only way you could satisfy both it and this License would be to
-refrain entirely from distribution of the Program.
-
-If any portion of this section is held invalid or unenforceable under
-any particular circumstance, the balance of the section is intended to
-apply and the section as a whole is intended to apply in other
-circumstances.
-
-It is not the purpose of this section to induce you to infringe any
-patents or other property right claims or to contest validity of any
-such claims; this section has the sole purpose of protecting the
-integrity of the free software distribution system, which is
-implemented by public license practices.  Many people have made
-generous contributions to the wide range of software distributed
-through that system in reliance on consistent application of that
-system; it is up to the author/donor to decide if he or she is willing
-to distribute software through any other system and a licensee cannot
-impose that choice.
-
-This section is intended to make thoroughly clear what is believed to
-be a consequence of the rest of this License.
-
-  8. If the distribution and/or use of the Program is restricted in
-certain countries either by patents or by copyrighted interfaces, the
-original copyright holder who places the Program under this License
-may add an explicit geographical distribution limitation excluding
-those countries, so that distribution is permitted only in or among
-countries not thus excluded.  In such case, this License incorporates
-the limitation as if written in the body of this License.
-
-  9. The Free Software Foundation may publish revised and/or new
-versions of the General Public License from time to time.  Such new
-versions will be similar in spirit to the present version, but may
-differ in detail to address new problems or concerns.
-
-Each version is given a distinguishing version number.  If the Program
-specifies a version number of this License which applies to it and
-"any later version", you have the option of following the terms and
-conditions either of that version or of any later version published by
-the Free Software Foundation.  If the Program does not specify a
-version number of this License, you may choose any version ever
-published by the Free Software Foundation.
-
-  10. If you wish to incorporate parts of the Program into other free
-programs whose distribution conditions are different, write to the
-author to ask for permission.  For software which is copyrighted by the
-Free Software Foundation, write to the Free Software Foundation; we
-sometimes make exceptions for this.  Our decision will be guided by the
-two goals of preserving the free status of all derivatives of our free
-software and of promoting the sharing and reuse of software generally.
-
-                            NO WARRANTY
-
-  11. BECAUSE THE PROGRAM IS LICENSED FREE OF CHARGE, THERE IS NO
-WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY APPLICABLE LAW.
-EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT HOLDERS AND/OR
-OTHER PARTIES PROVIDE THE PROGRAM "AS IS" WITHOUT WARRANTY OF ANY KIND,
-EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
-THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM IS
-WITH YOU.  SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF
-ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
-
-  12. IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN
-WRITING WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MAY MODIFY
-AND/OR REDISTRIBUTE THE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU
-FOR DAMAGES, INCLUDING ANY GENERAL, SPECIAL, INCIDENTAL OR
-CONSEQUENTIAL DAMAGES ARISING OUT OF THE USE OR INABILITY TO USE THE
-PROGRAM (INCLUDING BUT NOT LIMITED TO LOSS OF DATA OR DATA BEING
-RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD PARTIES OR A
-FAILURE OF THE PROGRAM TO OPERATE WITH ANY OTHER PROGRAMS), EVEN IF
-SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH
-DAMAGES.
-
-                     END OF TERMS AND CONDITIONS
-
-        How to Apply These Terms to Your New Programs
-
-  If you develop a new program, and you want it to be of the greatest
-possible use to the public, the best way to achieve this is to make it
-free software which everyone can redistribute and change under these
-terms.
-
-  To do so, attach the following notices to the program.  It is safest
-to attach them to the start of each source file to most effectively
-convey the exclusion of warranty; and each file should have at least
-the "copyright" line and a pointer to where the full notice is found.
-
-    <one line to give the program's name and a brief idea of what it does.>
-    Copyright (C) <year>  <name of author>
-
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE."""
 
 
-Also add information on how to contact you by electronic and paper mail.
+# Einstellungen liegen in einer INI neben der EXE – passend dazu, dass auch
+# preview/ und plantuml.jar dort landen (siehe _app_dir). Nicht in der
+# Registry: der Ordner lässt sich damit samt Einstellungen kopieren.
+SETTINGS_FILE = "md-dis.ini"
 
-If the program is interactive, make it output a short notice like this
-when it starts in an interactive mode:
+# Seitenformate im Dialog. Gespeichert wird der Enum-Name, nicht der
+# Anzeigename, weil Executive in Qt "Executive.7.5x10in" heisst.
+PDF_PAGE_SIZES = ["A4", "A3", "A5", "Letter", "Legal", "Executive", "Tabloid"]
 
-    Gnomovision version 69, Copyright (C) year  name of author
-    Gnomovision comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
-    This is free software, and you are welcome to redistribute it
-    under certain conditions; type `show c' for details.
+# Rand-Presets in Millimetern. "Normal" ist Default, weil viele Drucker die
+# letzten Millimeter nicht bedrucken.
+PDF_MARGIN_PRESETS = [("Schmal", 10), ("Normal", 15), ("Weit", 25)]
 
-The hypothetical commands `show w' and `show c' should show the
-appropriate parts of the General Public License.  Of course, the
-commands you use may be called something other than `show w' and
-`show c'; they could even be mouse-clicks or menu items--whatever suits
-your program.
 
-You should also get your employer (if you work as a programmer) or your
-school, if any, to sign a "copyright disclaimer" for the program, if
-necessary.  Here is a sample; alter the names:
+def app_dir() -> str:
+    """Verzeichnis, in dem die App ihre Laufzeitdateien ablegt."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
 
-  Yoyodyne, Inc., hereby disclaims all copyright interest in the program
-  `Gnomovision' (which makes passes at compilers) written by James Hacker.
 
-  <signature of Ty Coon>, 1 April 1989
-  Ty Coon, President of Vice
+def pdf_page_layout(page_size: str, landscape: bool, margin_mm: int) -> QPageLayout:
+    """Baut das Seitenlayout fuer den PDF-Export.
 
-This General Public License does not permit incorporating your program
-into proprietary programs.  If your program is a subroutine library,
-you may consider it more useful to permit linking proprietary
-applications with the library.  If this is what you want to do, use the
-GNU Library General Public License instead of this License."""
+    Die Einheit muss ausdruecklich gesetzt werden: QPageLayout rechnet sonst in
+    Punkten, 12 waeren dann 12 pt (~4,2 mm) statt 12 mm.
+    """
+    size_id = getattr(QPageSize.PageSizeId, page_size, QPageSize.PageSizeId.A4)
+    orientation = (QPageLayout.Orientation.Landscape if landscape
+                   else QPageLayout.Orientation.Portrait)
+    margins = QMarginsF(margin_mm, margin_mm, margin_mm, margin_mm)
+    return QPageLayout(QPageSize(size_id), orientation, margins,
+                       QPageLayout.Unit.Millimeter)
+
+
+class PdfOptionsDialog(QDialog):
+    """Seitenformat, Ausrichtung und Rand fuer den PDF-Export waehlen."""
+
+    def __init__(self, page_size: str, landscape: bool, margin_label: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("PDF-Optionen")
+
+        self.size_combo = QComboBox()
+        for name in PDF_PAGE_SIZES:
+            self.size_combo.addItem(name, name)
+        index = self.size_combo.findData(page_size)
+        self.size_combo.setCurrentIndex(index if index >= 0 else 0)
+
+        # Radiobuttons statt Combo, weil die Auswahl eine Entscheidung ist und
+        # nicht nur ein Wert – die beiden Richtungen sind sofort ueberschaubar.
+        self.portrait_radio = QRadioButton("Hochformat")
+        self.landscape_radio = QRadioButton("Querformat")
+        (self.landscape_radio if landscape else self.portrait_radio).setChecked(True)
+        orientation_group = QButtonGroup(self)
+        orientation_group.addButton(self.portrait_radio)
+        orientation_group.addButton(self.landscape_radio)
+
+        self.margin_radios = []
+        margin_group = QButtonGroup(self)
+        for label, mm in PDF_MARGIN_PRESETS:
+            radio = QRadioButton(f"{label} ({mm} mm)")
+            radio.setProperty("mm", mm)
+            radio.setProperty("label", label)
+            if label == margin_label:
+                radio.setChecked(True)
+            margin_group.addButton(radio)
+            self.margin_radios.append(radio)
+        if not any(r.isChecked() for r in self.margin_radios):
+            self.margin_radios[1].setChecked(True)
+
+        orientation_box = QWidget()
+        orientation_layout = QHBoxLayout(orientation_box)
+        orientation_layout.setContentsMargins(0, 0, 0, 0)
+        orientation_layout.addWidget(self.portrait_radio)
+        orientation_layout.addWidget(self.landscape_radio)
+
+        margin_box = QWidget()
+        margin_layout = QHBoxLayout(margin_box)
+        margin_layout.setContentsMargins(0, 0, 0, 0)
+        for radio in self.margin_radios:
+            margin_layout.addWidget(radio)
+
+        form = QFormLayout()
+        form.addRow("Seitenformat:", self.size_combo)
+        form.addRow("Ausrichtung:", orientation_box)
+        form.addRow("Rand:", margin_box)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+    def selected(self) -> tuple:
+        """(Enum-Name, quer, Rand-Label) fuer _export_pdf und QSettings."""
+        checked = next((r for r in self.margin_radios if r.isChecked()), None)
+        return (self.size_combo.currentData(),
+                self.landscape_radio.isChecked(),
+                checked.property("label") if checked else "Normal")
+
+    def page_layout(self) -> QPageLayout:
+        page_size, landscape, label = self.selected()
+        margin_mm = next(mm for lbl, mm in PDF_MARGIN_PRESETS if lbl == label)
+        return pdf_page_layout(page_size, landscape, margin_mm)
 
 
 class ExternalLinkPage(QWebEnginePage):
@@ -498,10 +291,32 @@ class MarkdownViewer(QMainWindow):
             icon_path = Path(sys._MEIPASS) / "icon.png"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
-        self.dark_mode = True
-        self.zoom_level = 1.0
+
+        self.settings = QSettings(
+            os.path.join(app_dir(), SETTINGS_FILE), QSettings.Format.IniFormat
+        )
+        # True, sobald sync() scheitert (z. B. schreibgeschuetzter
+        # Installationsordner) – dann laeuft die App nur noch im Speicher.
+        self._settings_persist = True
+
+        # Nicht bool(settings.value(...)): aus der INI kommt "false" als
+        # String zurueck, und bool("false") ist True. Der type-Kwarg
+        # erzwingt die echte Umwandlung.
+        self.dark_mode = self.settings.value("appearance/darkMode", True, type=bool)
+        self.zoom_level = self._clamp_zoom(
+            self.settings.value("appearance/zoomLevel", 1.0, type=float)
+        )
+        self.pdf_page_size = self.settings.value("pdf/pageSize", "A4", type=str)
+        self.pdf_landscape = self.settings.value("pdf/landscape", False, type=bool)
+        self.pdf_margin = self.settings.value("pdf/marginPreset", "Normal", type=str)
+
         self.current_file = None
         self.web_view = None
+        # True, sobald mindestens eine Seite vollstaendig geladen ist. Ohne
+        # dieses Gate wuerde printToPdf waehrend eines Reloads (z. B. nach
+        # einem Theme-Wechsel) ein leeres PDF schreiben.
+        self._page_loaded = False
+        self._pdf_exporting = False
         self.edit_mode = False
         self._dirty = False
         self.editor = None
@@ -546,6 +361,35 @@ class MarkdownViewer(QMainWindow):
         # Defer plantuml check & web view init to after window is shown
         QTimer.singleShot(0, self._init_deferred)
 
+    @staticmethod
+    def _clamp_zoom(value) -> float:
+        """Zoom auf den Bereich begrenzen, den _zoom_in/_zoom_out zulassen.
+
+        Eine von Hand editierte INI darf die Ansicht nicht unbedienbar machen.
+        """
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return 1.0
+        return max(0.5, min(value, 3.0))
+
+    def _save_settings(self):
+        """Einstellungen in die INI schreiben; bei fehlender Rechte still."""
+        if not self._settings_persist:
+            return
+        self.settings.setValue("appearance/darkMode", self.dark_mode)
+        self.settings.setValue("appearance/zoomLevel", self.zoom_level)
+        self.settings.setValue("pdf/pageSize", self.pdf_page_size)
+        self.settings.setValue("pdf/landscape", self.pdf_landscape)
+        self.settings.setValue("pdf/marginPreset", self.pdf_margin)
+        self.settings.sync()
+        if self.settings.status() == QSettings.Status.AccessError:
+            # z. B. read-only installiert – ab jetzt nur noch im Speicher
+            self._settings_persist = False
+            self.statusBar().showMessage(
+                f"{SETTINGS_FILE} nicht schreibbar – Einstellungen gelten nur für diese Sitzung"
+            )
+
     def _init_deferred(self):
         """Run heavy init after window is visible."""
         self._check_plantuml()
@@ -558,13 +402,27 @@ class MarkdownViewer(QMainWindow):
         self.web_view = QWebEngineView()
         self.web_view.setPage(ExternalLinkPage(self, self.web_view))
         # Zoom wirkt direkt auf die Ansicht – kein Neurendern nötig
-        self.web_view.loadFinished.connect(lambda _ok: self.web_view.setZoomFactor(self.zoom_level))
+        self.web_view.loadFinished.connect(self._on_page_loaded)
+        page = self.web_view.page()
+        page.pdfPrintingFinished.connect(self._on_pdf_finished)
         settings = self.web_view.settings()
         # Kein JS nötig (Diagramme kommen als fertiges SVG) – verhindert, dass
         # Skripte aus fremden .md-Dateien lokale Dateien lesen und ausleiten
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, False)
 
         self.stack.addWidget(self.web_view)
+
+    def _on_page_loaded(self, ok):
+        """Nach jedem Laden Zoom setzen und den PDF-Export freigeben."""
+        self._page_loaded = bool(ok)
+        self.web_view.setZoomFactor(self.zoom_level)
+        self._update_pdf_action()
+
+    def _update_pdf_action(self):
+        if getattr(self, "pdf_action", None) is None:
+            return
+        enabled = bool(self.current_file) and self._page_loaded and not self._pdf_exporting
+        self.pdf_action.setEnabled(enabled)
 
     def _create_toolbar(self):
         toolbar = QToolBar("Hauptwerkzeugleiste")
@@ -621,9 +479,20 @@ class MarkdownViewer(QMainWindow):
 
         # Dark/Light toggle – label shows what clicking will do
         self.theme_action = QAction("Hellmodus", self)
+        # Beschriftung an den geladenen Zustand anpassen, sonst bietet der Knopf
+        # nach einem Start im Hellmodus den Wechsel an, den er nicht ausfuehrt
+        self.theme_action.setText("Hellmodus" if self.dark_mode else "Dunkelmodus")
         self.theme_action.setShortcut(QKeySequence("Ctrl+D"))
         self.theme_action.triggered.connect(self._toggle_theme)
         toolbar.addAction(self.theme_action)
+
+        # PDF export – nach dem Theme, weil es die aktuelle Darstellung nutzt
+        self.pdf_action = QAction("Als PDF speichern…", self)
+        self.pdf_action.setShortcut(QKeySequence("Ctrl+P"))
+        self.pdf_action.triggered.connect(self._export_pdf)
+        self.pdf_action.setEnabled(False)
+        toolbar.addAction(self.pdf_action)
+        toolbar.addSeparator()
 
         # Search
         search_action = QAction("Suchen", self)
@@ -639,7 +508,7 @@ class MarkdownViewer(QMainWindow):
         help_open_action.setShortcut(QKeySequence("F1"))
         help_open_action.triggered.connect(self._show_help)
         help_menu.addAction(help_open_action)
-        help_menu.addAction("Lizenz (GPL-2)", self._show_license)
+        help_menu.addAction("Lizenz (MIT)", self._show_license)
         help_menu.addAction("Über / Version", self._show_about)
 
         help_action = QAction("Hilfe", self)
@@ -765,20 +634,20 @@ class MarkdownViewer(QMainWindow):
         self.stack.setCurrentWidget(self.web_view)
 
     def _show_license(self):
-        """Show the GNU GPL v2 license in a dialog."""
+        """Show the MIT license in a dialog."""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Lizenz – GNU GPL v2")
-        dialog.resize(720, 560)
+        dialog.setWindowTitle("Lizenz – MIT")
+        dialog.resize(720, 480)
 
         layout = QVBoxLayout(dialog)
 
-        headline = QLabel("md-dis ist freie Software.")
+        headline = QLabel("md-dis ist freie Software (MIT-Lizenz).")
         headline.setWordWrap(True)
         layout.addWidget(headline)
 
         text = QPlainTextEdit()
         text.setReadOnly(True)
-        text.setPlainText(GPL2_TEXT)
+        text.setPlainText(MIT_TEXT)
         font = text.font()
         font.setFamily("Consolas")
         font.setPointSize(9)
@@ -815,7 +684,7 @@ class MarkdownViewer(QMainWindow):
             "<b>Qt:</b> {qt}<br>"
             "<br>"
             "Markdown-Viewer mit Mermaid- und PlantUML-Diagrammen.<br>"
-            "Lizenziert unter der GNU General Public License v2.".format(
+            "Lizenziert unter der MIT-Lizenz.".format(
                 version=VERSION,
                 py=sys.version.split()[0],
                 pyqt=PYQT_VERSION_STR,
@@ -861,6 +730,7 @@ class MarkdownViewer(QMainWindow):
             self,
             "plantuml.jar fehlt",
             "plantuml.jar wurde nicht gefunden.\n\n"
+            f"Gesucht in:\n  {chr(10).join(str(d) for d in get_jar_search_dirs())}\n\n"
             "Möchten Sie es jetzt herunterladen?\n"
             "(Benötigt Internetverbindung)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -888,8 +758,9 @@ class MarkdownViewer(QMainWindow):
                     self,
                     "Fehler",
                     "plantuml.jar konnte nicht heruntergeladen werden.\n\n"
-                    "Bitte manuell von https://plantuml.com/de/download herunterladen.\n"
-                    f"Zielverzeichnis: {get_base_dir()}"
+                    "Bitte manuell von https://plantuml.com/de/download herunterladen und "
+                    "in eines dieser Verzeichnisse legen:\n"
+                    + "\n".join(f"  {d}" for d in get_jar_search_dirs())
                 )
 
     def _open_file(self):
@@ -922,6 +793,9 @@ class MarkdownViewer(QMainWindow):
             self.setWindowTitle(f"md-dis – {title}")
             self.save_action.setEnabled(True)
             self.edit_action.setEnabled(True)
+            # Erst nach dem Rendern freigeben: _render_md_content setzt
+            # _page_loaded zurueck, bis loadFinished kommt.
+            self._update_pdf_action()
         except Exception as e:
             self.progress_bar.setVisible(False)
             QMessageBox.critical(self, "Fehler", f"Datei konnte nicht gelesen werden:\n{e}")
@@ -938,6 +812,10 @@ class MarkdownViewer(QMainWindow):
         self.statusBar().showMessage("Rendere Markdown...")
         QApplication.processEvents()
 
+        # zoom_level wird hier bewusst nicht uebergeben: die Vergroesserung
+        # laeuft ausschliesslich ueber setZoomFactor (View-Ebene). Ein
+        # Durchreichen wuerde die Schriftgroesse zusaetzlich in das CSS
+        # einbrennen und damit doppelt skalieren.
         html = markdown_to_html(md_text, self.dark_mode,
                                  progress_callback=on_plantuml_progress)
         self._ensure_web_view()
@@ -947,17 +825,23 @@ class MarkdownViewer(QMainWindow):
             tmp_html = os.path.join(self._preview_dir(), ".md-dis-preview.html")
             with open(tmp_html, 'w', encoding='utf-8') as hf:
                 hf.write(html)
-            self.web_view.setUrl(QUrl.fromLocalFile(tmp_html))
+            self._page_loaded = False
+            self._update_pdf_action()
+            # Anzeige per setHtml mit Basis-URL auf dem Verzeichnis der
+            # Markdown-Datei. Ueber setUrl(QUrl.fromLocalFile(...)) loesten
+            # sich relative Bildpfade dagegen gegen preview/ auf und brachen.
+            base_url = QUrl.fromLocalFile(
+                os.path.dirname(os.path.abspath(self.current_file)) + os.sep
+            ) if self.current_file else QUrl.fromLocalFile(
+                self._preview_dir() + os.sep
+            )
+            self.web_view.setHtml(html, base_url)
 
         self.progress_bar.setVisible(False)
         self.statusBar().showMessage(f"Geladen: {self.current_file}")
 
     def _preview_dir(self) -> str:
-        if getattr(sys, 'frozen', False):
-            base = os.path.dirname(os.path.abspath(sys.executable))
-        else:
-            base = os.path.dirname(os.path.abspath(__file__))
-        preview_dir = os.path.join(base, "preview")
+        preview_dir = os.path.join(app_dir(), "preview")
         os.makedirs(preview_dir, exist_ok=True)
         return preview_dir
 
@@ -1040,12 +924,9 @@ class MarkdownViewer(QMainWindow):
         if self._dirty and not self._confirm_discard():
             event.ignore()
             return
+        # Zoom und Theme koennen auch ohne exportiertes PDF veraendert worden sein
+        self._save_settings()
         event.accept()
-
-    def _render_markdown(self, md_text: str):
-        html = markdown_to_html(md_text, self.dark_mode, self.zoom_level)
-        self._ensure_web_view()
-        self.web_view.setHtml(html)
 
     def _reload_current(self):
         if not self.current_file:
@@ -1072,6 +953,7 @@ class MarkdownViewer(QMainWindow):
     def _apply_zoom(self):
         if self.web_view is not None:
             self.web_view.setZoomFactor(self.zoom_level)
+        self._save_settings()
 
     def _toggle_theme(self):
         self.dark_mode = not self.dark_mode
@@ -1079,7 +961,70 @@ class MarkdownViewer(QMainWindow):
             self.theme_action.setText("Hellmodus")
         else:
             self.theme_action.setText("Dunkelmodus")
+        self._save_settings()
         self._reload_current()
+
+    def _export_pdf(self):
+        """Aktuelle Vorschau als PDF speichern (Chromium printToPdf)."""
+        if not self.current_file:
+            return
+        if self.web_view is None or not self._page_loaded:
+            QMessageBox.information(
+                self, "PDF-Export",
+                "Die Vorschau ist noch nicht geladen. Bitte kurz warten und es erneut versuchen."
+            )
+            return
+        if self._dirty:
+            answer = QMessageBox.question(
+                self, "PDF-Export",
+                "Es gibt ungespeicherte Änderungen. Die PDF enthält den Stand der\n"
+                "letzten Vorschau, nicht den Editor-Inhalt. Trotzdem fortfahren?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        dialog = PdfOptionsDialog(
+            self.pdf_page_size, self.pdf_landscape, self.pdf_margin, self
+        )
+        if not dialog.exec():
+            return
+        page_size, landscape, margin_label = dialog.selected()
+
+        # Layouteinstellung unabhängig vom Ziel speichern: bricht der
+        # Dateidialog ab, gilt sie trotzdem beim nächsten Mal.
+        self.pdf_page_size = page_size
+        self.pdf_landscape = landscape
+        self.pdf_margin = margin_label
+        self._save_settings()
+
+        default_path = os.path.splitext(self.current_file)[0] + ".pdf"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Als PDF speichern", default_path, "PDF-Dokumente (*.pdf)"
+        )
+        if not file_path:
+            return
+
+        self._pdf_exporting = True
+        self._update_pdf_action()
+        self.statusBar().showMessage("Erstelle PDF...")
+        QApplication.processEvents()
+        # Asynchron: das Ergebnis meldet _on_pdf_finished. printToPdf
+        # ignoriert setZoomFactor, das PDF ist also unabhaengig vom Zoom.
+        self.web_view.page().printToPdf(file_path, dialog.page_layout())
+
+    def _on_pdf_finished(self, file_path, success):
+        self._pdf_exporting = False
+        self._update_pdf_action()
+        if success:
+            self.statusBar().showMessage(f"PDF gespeichert: {file_path}", 8000)
+        else:
+            self.statusBar().showMessage("PDF-Export fehlgeschlagen", 5000)
+            QMessageBox.warning(
+                self, "PDF-Export",
+                f"Die PDF konnte nicht erstellt werden:\n{file_path}"
+            )
 
     # Drag & Drop – Event-Filter auf QMainWindow + QApplication,
     # damit auch die QWebEngineView (internes Render-Widget) Drops abgibt.
@@ -1103,6 +1048,9 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("md-dis")
     app.setApplicationVersion(VERSION)
+    # QSettings braucht den Organisationsnamen fuer einen sauberen Pfad, auch
+    # wenn die Datei selbst per app_dir() fest verdrahtet ist.
+    app.setOrganizationName("md-dis")
 
     window = MarkdownViewer()
     window.show()

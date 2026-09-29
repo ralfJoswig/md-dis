@@ -20,7 +20,7 @@ from pathlib import Path
 
 import markdown
 
-VERSION = "1.1.0"
+VERSION = "1.2.1"
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -240,17 +240,114 @@ body {{
 }}
 """
 
+# Wird hinter CSS_LIGHT/CSS_DARK gehaengt und greift nur beim PDF-Export
+# (QWebEnginePage.printToPdf in md_dis.py). Ersetzt das Dark-Theme durch die
+# helle Palette, damit die PDF auf Papier und am Bildschirm gleich gut
+# lesbar ist, und sorgt fuer sinnvolle Seitenumbrueche.
+CSS_PRINT = """
+@media print {{
+    html, body {{
+        background: #ffffff !important;
+        color: #24292e !important;
+        /* Zoom wirkt nur auf die Ansicht (setZoomFactor), printToPdf ignoriert
+           ihn. Die feste Groesse haelt das PDF unabhaengig vom Bildschirm-Zoom. */
+        font-size: 16px !important;
+        /* Seitenrand kommt aus QPageLayout, nicht aus dem body-Padding */
+        max-width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }}
+    /* Chromium druckt Hintergruende nur auf ausdrueckliche Anforderung */
+    html, body, .markdown-body, pre, code, table, tr, th, td, .frontmatter {{
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }}
+    .markdown-body h1, .markdown-body h2, .markdown-body h3,
+    .markdown-body h4, .markdown-body h5, .markdown-body h6 {{
+        color: #24292e !important;
+        break-after: avoid;
+        page-break-after: avoid;
+    }}
+    .markdown-body h1, .markdown-body h2 {{
+        border-bottom-color: #eaecef !important;
+    }}
+    .markdown-body a {{
+        color: #0366d6 !important;
+    }}
+    .markdown-body hr {{
+        background-color: #e1e4e8 !important;
+    }}
+    .markdown-body code {{
+        background-color: rgba(27,31,35,0.05) !important;
+    }}
+    .markdown-body pre {{
+        background-color: #f6f8fa !important;
+        border-color: #e1e4e8 !important;
+        color: #24292e !important;
+        /* overflow: auto wuerde den Block am Seitenrand beschneiden */
+        overflow: visible !important;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }}
+    /* Das Dark-Theme setzt die Code-Farbe an pre code, nicht an pre –
+       ohne diese Zeile bleibt der Codeblock hellgrau auf hellgrau. */
+    .markdown-body pre code, .markdown-body pre > code {{
+        color: #24292e !important;
+    }}
+    .markdown-body blockquote {{
+        color: #6a737d !important;
+        border-left-color: #dfe2e5 !important;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }}
+    /* display:block und overflow:auto verhindern sonst den Seitenumbruch
+       innerhalb einer Tabelle und schneiden breite Spalten ab */
+    .markdown-body table {{
+        display: table !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow: visible !important;
+    }}
+    .markdown-body table th, .markdown-body table td {{
+        border-color: #dfe2e5 !important;
+    }}
+    .markdown-body table tr {{
+        background-color: #ffffff !important;
+        border-top-color: #c6cbd1 !important;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }}
+    .markdown-body table tr:nth-child(2n) {{
+        background-color: #f6f8fa !important;
+    }}
+    /* Die Frontmatter-Box setzt Inline-Styles, die nur !important ueberstimmt */
+    .frontmatter {{
+        background: #f6f8fa !important;
+        border-color: #e1e4e8 !important;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }}
+    /* PlantUML und Mermaid werden als Inline-SVG eingefuegt */
+    .markdown-body svg {{
+        display: block !important;
+        max-width: 100% !important;
+        height: auto !important;
+        margin: 0 auto;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }}
+    .markdown-body img {{
+        max-width: 100% !important;
+        height: auto !important;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }}
+}}
+"""
 
-def get_plantuml_jar_path() -> str | None:
-    """Find plantuml.jar next to the executable or script."""
-    if getattr(sys, 'frozen', False):
-        base_dir = Path(sys.executable).parent
-    else:
-        base_dir = Path(__file__).parent
-    jar_path = base_dir / "plantuml.jar"
-    if jar_path.exists():
-        return str(jar_path)
-    return None
+
+JAR_NAME = "plantuml.jar"
+PLANTUML_JAR_ENV = "MD_DIS_PLANTUML_JAR"
 
 
 def get_base_dir() -> Path:
@@ -258,6 +355,49 @@ def get_base_dir() -> Path:
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).parent
     return Path(__file__).parent
+
+
+def get_cache_dir() -> Path:
+    """Benutzerlokales Verzeichnis fuer mitgelieferte Hilfsdateien (z. B. plantuml.jar)."""
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+    return Path(base) / "md-dis" if base else get_base_dir()
+
+
+def get_jar_search_dirs() -> list[Path]:
+    """Orte, an denen plantuml.jar gesucht wird – in dieser Prioritaet.
+
+    1. explizit gesetzte Umgebungsvariable MD_DIS_PLANTUML_JAR
+    2. Programmverzeichnis (Exe-Ordner bei frozen, sonst Skriptordner)
+    3. Benutzer-Cache (%LOCALAPPDATA%\\md-dis)
+    """
+    candidates = []
+    override = os.environ.get(PLANTUML_JAR_ENV)
+    if override:
+        candidates.append(Path(override).expanduser())
+    candidates.append(get_base_dir())
+    candidates.append(get_cache_dir())
+
+    dirs = []
+    for d in candidates:
+        try:
+            resolved = d.resolve()
+        except OSError:
+            continue
+        if resolved not in dirs:
+            dirs.append(resolved)
+    return dirs
+
+
+def get_plantuml_jar_path() -> str | None:
+    """Findet plantuml.jar in einem der Suchverzeichnisse (siehe get_jar_search_dirs)."""
+    for d in get_jar_search_dirs():
+        jar = d / JAR_NAME
+        try:
+            if jar.is_file() and jar.stat().st_size > 0:
+                return str(jar)
+        except OSError:
+            continue
+    return None
 
 
 # Gefundene Programmpfade (nur Treffer, damit eine spätere Installation erkannt wird)
@@ -328,42 +468,68 @@ def check_java_available() -> bool:
         return False
 
 
-def download_plantuml_jar(progress_callback=None) -> bool:
-    """Download plantuml.jar from GitHub releases."""
-    jar_url = "https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar"
-    target_path = get_base_dir() / "plantuml.jar"
+def _jar_download_target() -> Path:
+    """Zielverzeichnis fuer den Download: Programmordner, sonst Benutzer-Cache.
 
-    if target_path.exists() and target_path.stat().st_size > 0:
+    Der Programmordner ist bei Installationen unter C:\\Program Files nicht
+    beschreibbar – dann landet die JAR im Benutzer-Cache.
+    """
+    for d in (get_base_dir(), get_cache_dir()):
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        if os.access(d, os.W_OK):
+            return d
+    return get_cache_dir()
+
+
+def download_plantuml_jar(progress_callback=None) -> bool:
+    """Download plantuml.jar from GitHub releases.
+
+    Ziel: das Programmverzeichnis, falls beschreibbar, sonst der Benutzer-Cache.
+    """
+    if get_plantuml_jar_path():
         return True
 
-    try:
+    jar_url = "https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar"
+    target_path = _jar_download_target() / JAR_NAME
+    tmp_path = target_path.with_name(JAR_NAME + ".part")
+
+    def _say(msg):
         if progress_callback:
-            progress_callback(f"Lade plantuml.jar herunter... (Ziel: {target_path})")
+            progress_callback(msg)
+
+    try:
+        _say(f"Lade plantuml.jar herunter... (Ziel: {target_path})")
 
         req = urllib.request.Request(
             jar_url,
             headers={"User-Agent": f"md-dis/{VERSION}"}
         )
-        resp = urllib.request.urlopen(req, timeout=120)
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = resp.read()
 
-        data = resp.read()
-        resp.close()
-
-        with open(target_path, 'wb') as f:
-            f.write(data)
-
-        if target_path.exists() and target_path.stat().st_size > 0:
-            if progress_callback:
-                progress_callback(f"plantuml.jar erfolgreich heruntergeladen ({target_path.stat().st_size} Bytes).")
-            return True
-        else:
-            if progress_callback:
-                progress_callback("Fehler: Heruntergeladene Datei ist leer.")
+        if not data:
+            _say("Fehler: Heruntergeladene Datei ist leer.")
             return False
 
+        # Erst vollstaendig in eine .part-Datei schreiben, dann atomar umbenennen –
+        # ein abgebrochener Download hinterlaesst so keine kaputte plantuml.jar.
+        with open(tmp_path, 'wb') as f:
+            f.write(data)
+        os.replace(tmp_path, target_path)
+
+        _say(f"plantuml.jar erfolgreich heruntergeladen ({target_path.stat().st_size} Bytes).")
+        return True
+
     except Exception as e:
-        if progress_callback:
-            progress_callback(f"Fehler beim Herunterladen: {type(e).__name__}: {e}")
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+        _say(f"Fehler beim Herunterladen: {type(e).__name__}: {e}")
         return False
 
 
@@ -389,7 +555,8 @@ def _plantuml_batch(codes: list[str], sandbox: bool = False) -> list[tuple[str, 
         download_plantuml_jar()
         jar_path = get_plantuml_jar_path()
     if not jar_path:
-        msg = f"PlantUML: plantuml.jar nicht gefunden im App-Verzeichnis ({html.escape(str(get_base_dir()))})."
+        searched = ", ".join(html.escape(str(d)) for d in get_jar_search_dirs())
+        msg = f"PlantUML: plantuml.jar nicht gefunden. Gesucht in: {searched}"
         return [(_diagram_error(msg, c), False) for c in codes]
 
     java = find_java()
@@ -707,6 +874,9 @@ def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 
         content = fm_html + content
 
     css = CSS_DARK if dark_mode else CSS_LIGHT
+    # Print-Regeln hinten anhaengen: gleiche Spezifitaet, spaeter im Stylesheet
+    # gewinnt, und der Block ist damit theme-unabhaengig hell.
+    css += CSS_PRINT
     font_size = int(16 * zoom_level)
     css = css.format(font_size=font_size)
 

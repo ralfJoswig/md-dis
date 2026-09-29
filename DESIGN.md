@@ -11,6 +11,8 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
 | GUI | PyQt6 + QWebEngineView |
 | Plattform | Windows Desktop |
 | Paketierung | PyInstaller → .exe |
+| PDF | `QWebEnginePage.printToPdf` (Chromium), keine Zusatzabhängigkeit |
+| Einstellungen | `QSettings` im INI-Format, Datei neben der .exe |
 
 ## Features
 
@@ -32,9 +34,22 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
 - Scrollbar
 - Zoombar (Ctrl+/- oder Mausrad)
 - Farbschema: Hell/Dunkel Toggle
+- Farbschema und Zoom werden in `md-dis.ini` neben der .exe gespeichert
+
+### PDF-Export
+- `Ctrl+P` → Dialog für Seitenformat, Ausrichtung und Rand-Preset
+- Erzeugung über `QWebEnginePage.printToPdf`, asynchron; Ergebnis meldet `pdfPrintingFinished`
+- `CSS_PRINT` in `md_render.py` erzwingt im `@media print` die helle Palette,
+  damit eine PDF aus dem Dunkelmodus nicht schwarz gedruckt wird
+- Layout-Auswahl wird unabhängig vom Zieldateinamen gespeichert
+- Kein Skalierungsregler: `printToPdf` bietet in PyQt6 keinen `scaleFactor`.
+  Für breite Diagramme gibt es Querformat
 
 ### Vorschau
 - Kein Auto-Reload bei Dateiänderungen
+- Anzeige per `setHtml` mit `baseUrl` auf dem Verzeichnis der Markdown-Datei,
+  damit relative Bildpfade auflösen (vorher `setUrl` auf `preview/`, wodurch
+  Bilder aus dem Dokumentverzeichnis fehlten)
 
 ## Projektstruktur
 
@@ -66,6 +81,9 @@ md-dis/
 | Strg+- | Verkleinern |
 | Strg+0 | Zoom zurücksetzen |
 | Strg+D | Hell/Dunkel umschalten |
+| Strg+P | Vorschau als PDF speichern |
+| Strg+F | Suchen |
+| F2 | Bearbeiten |
 
 ## Build
 

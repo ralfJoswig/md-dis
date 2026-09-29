@@ -1,10 +1,82 @@
 #!/usr/bin/env python3
-"""Build-Skript für md-dis mit PyInstaller."""
+"""Build-Skript für md-dis mit PyInstaller.
 
+Versionsregel:
+  md_render.py enthaelt die einzige Versionsangabe VERSION = "MAJOR.MINOR.BUILD".
+  Major und Minor werden ausschliesslich auf Anforderung per --set-version gesetzt.
+  Der dritte Teil ist die Build-Nummer und wird bei jedem Build automatisch um 1
+  erhoeht -- auch dann, wenn der Build danach fehlschlaegt (die Nummer ist dann
+  verbraucht, damit zwei verschiedene Artefakte nie dieselbe Nummer tragen).
+"""
+
+import re
 import subprocess
 import sys
 import os
 import shutil
+
+
+VERSION_TARGET = "md_render.py"
+VERSION_RE = re.compile(r'^VERSION\s*=\s*"(\d+)\.(\d+)\.(\d+)"[ \t]*\r?$', re.MULTILINE)
+SET_VERSION_RE = re.compile(r'^(\d+)\.(\d+)$')
+
+
+def read_version(base_dir):
+    """Liest (major, minor, build) aus md_render.py."""
+    path = os.path.join(base_dir, VERSION_TARGET)
+    try:
+        with open(path, encoding="utf-8", newline="") as f:
+            text = f.read()
+    except OSError as e:
+        sys.exit(f"Fehler: {VERSION_TARGET} nicht lesbar: {e}")
+    m = VERSION_RE.search(text)
+    if not m:
+        sys.exit(f'Fehler: Keine Zeile der Form VERSION = "MAJOR.MINOR.BUILD" in {VERSION_TARGET}.')
+    return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def write_version(base_dir, major, minor, build):
+    """Schreibt die Version zurueck; Zeilenenden bleiben unveraendert."""
+    path = os.path.join(base_dir, VERSION_TARGET)
+    new_line = f'VERSION = "{major}.{minor}.{build}"'
+    try:
+        with open(path, encoding="utf-8", newline="") as f:
+            text = f.read()
+        # Das Treffer-Match endet auf einem "\r" bei CRLF-Dateien – das gehoert
+        # zur Zeile und muss wieder ausgegeben werden, sonst entsteht eine
+        # LF-only-Zeile in einer CRLF-Datei.
+        def _replace(match):
+            return new_line + ("\r" if match.group(0).endswith("\r") else "")
+        text = VERSION_RE.sub(_replace, text, count=1)
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+    except OSError as e:
+        sys.exit(f"Fehler: Version in {VERSION_TARGET} nicht schreibbar: {e}")
+
+
+def apply_version(base_dir, argv):
+    """Setzt Major/Minor auf Anforderung und zaehlt die Build-Nummer hoch.
+
+    Gibt die zum Build gehoerende Version zurueck.
+    """
+    major, minor, build = read_version(base_dir)
+
+    if "--set-version" in argv:
+        i = argv.index("--set-version")
+        if i + 1 >= len(argv):
+            sys.exit("Fehler: --set-version erwartet MAJOR.MINOR, z. B. --set-version 2.0")
+        m = SET_VERSION_RE.match(argv[i + 1])
+        if not m:
+            sys.exit(f'Fehler: --set-version erwartet MAJOR.MINOR, nicht "{argv[i + 1]}".')
+        new_major, new_minor = int(m.group(1)), int(m.group(2))
+        if (new_major, new_minor) != (major, minor):
+            build = 0  # neue Minor/Major-Serie startet bei Build 1
+            print(f"Version auf {new_major}.{new_minor} gesetzt (Build-Nummer zurueckgesetzt).")
+        major, minor = new_major, new_minor
+
+    build += 1
+    write_version(base_dir, major, minor, build)
+    return major, minor, build
 
 
 # Qt-DLLs, die beim Lauf wirklich benötigt werden (direkte Abhängigkeiten
@@ -139,18 +211,22 @@ def build():
             "--name", "md-dis-server",
             "md_dis_server.py",
         ]
-        print("Baue md-dis-server.exe (headless, ohne Qt) ...")
+        major, minor, build_no = apply_version(base_dir, sys.argv)
+        print(f"Baue md-dis-server.exe (Version {major}.{minor}.{build_no}, headless, ohne Qt) ...")
         result = subprocess.run(cmd, cwd=base_dir)
         if result.returncode == 0:
-            print("\nBuild erfolgreich!")
+            print(f"\nBuild erfolgreich! (Version {major}.{minor}.{build_no})")
             print("Der Server befindet sich in: dist/md-dis-server/")
             print("Start: dist/md-dis-server/md-dis-server.exe --port 8080 --root .")
         else:
-            print("\nBuild fehlgeschlagen!")
+            print(f"\nBuild fehlgeschlagen! (Build-Nummer {major}.{minor}.{build_no} ist verbraucht)")
             sys.exit(1)
         return
 
     icon_path = os.path.join(base_dir, "icon.ico")
+
+    major, minor, build_no = apply_version(base_dir, sys.argv)
+    print(f"Baue md-dis.exe (Version {major}.{minor}.{build_no}) ...")
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -169,17 +245,16 @@ def build():
     if os.path.isdir(dist_dir):
         shutil.rmtree(dist_dir)
 
-    print("Baue md-dis.exe ...")
     result = subprocess.run(cmd, cwd=base_dir)
 
     if result.returncode == 0:
-        print("\nBuild erfolgreich!")
+        print(f"\nBuild erfolgreich! (Version {major}.{minor}.{build_no})")
         print("Die Anwendung befindet sich in: dist/md-dis/")
         print("Entferne unbenutzte Qt-Module ...")
         prune_dist(base_dir)
         print("plantuml.jar wird bei Bedarf automatisch heruntergeladen.")
     else:
-        print("\nBuild fehlgeschlagen!")
+        print(f"\nBuild fehlgeschlagen! (Build-Nummer {major}.{minor}.{build_no} ist verbraucht)")
         sys.exit(1)
 
 

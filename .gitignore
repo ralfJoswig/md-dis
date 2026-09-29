@@ -11,6 +11,7 @@ __pycache__/
 plantuml.jar
 uploads/
 preview/
+md-dis.ini
 
 # Windows ADS-Marker (von Dateien aus der WSL-Umgebung)
 *:Zone.Identifier
