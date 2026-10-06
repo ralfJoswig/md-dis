@@ -64,8 +64,10 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 ## Work State (verifiziert)
 - `md_render.py` existiert und ist durch `py_compile` + Rendering-Scratch-Tests (Markdown/Dark/Zoom/Frontmatter) bestätigt; `md_dis.py` baut auf dem Kern auf.
 - **Source-Mode verifiziert am 2026-09-29** nach der Lizenz- und JAR-Änderung: `py_compile` aller Module, Render-Probe (Frontmatter/Tabellen/Mermaid-SVG) und kompletter Server-Routen-Durchlauf (Index, Doc, raw, poll, watch.js, Upload-Pfad, Traversal-404, Fremd-Host-403).
-- **GUI-Frozen** `dist/md-dis/` (414 MB): **aktuell, Version 1.2.1**, gebaut am 2026-09-29. Enthält MIT-Lizenz, JAR-Fix, PDF-Export, Einstellungen und den `baseUrl`-Fix. `warn-md-dis.txt` meldet 0 fehlende PyQt6-Module.
-- **Server-Frozen** `dist/md-dis-server/` (55 MB): **weiter veraltet** – kein MIT-/JAR-Fix, kein PDF (bewusst GUI-only). `--file`-Redirect und Browser-Upload waren im letzten Build enthalten. Nächster Server-Build würde 1.2.2 ergeben.
+- **GUI-Frozen** `dist/md-dis/` (414 MB + 28,5 MB `plantuml.jar`): **Version 1.2.1, gebaut 2026-09-29** – enthält MIT-Lizenz, JAR-Fix, PDF-Export, Einstellungen und den `baseUrl`-Fix. **Veraltet gegenüber der Quelle 1.3.0**: `![[…]]` und der `strip_frontmatter`-Fix fehlen. `warn-md-dis.txt` meldet 0 fehlende PyQt6-Module.
+- **Server-Frozen** `dist/md-dis-server/` (55 MB): **Version 1.1.0 vom 2026-09-26**, also drei Versionen hinter der Quelle. Rebuild über `python build.py --server` ergibt 1.3.2, GUI-Rebuild ergibt 1.3.1.
+- **Bildeinbettung `![[…]]` verifiziert am 2026-09-29:** `EmbedImageProcessor` in `md_render.py`, Priorität 175, nur `.png/.jpg/.jpeg/.gif/.svg/.webp`. 47 Checks in `%TEMP%\opencode\verify_embed_syntax.py`, echter Chromium-Durchlauf in `%TEMP%\opencode\verify_embed_real.py` (`naturalWidth=60`, `complete=true`, 1 Bild im PDF). Server geprüft: `/doc.md` liefert genau ein `<img alt="" src="pictures/diagramm.png">`, `/pictures/diagramm.png` antwortet 200 `image/png`, Traversal weiter 404.
+- **`strip_frontmatter`-Bug gefunden und behoben (1.3.0):** das Hüllen-Muster war `^```(?:markdown)?\s*\n(.*?)\n```\s*\n?(.*)`. Dadurch traf es **jeden nackten** ```-Fence am Dokumentanfang: der Code wurde als Markdown gerendert, Links und Bilder wurden lebendig, und die Folgezeile klebte an (`code# Titel`). Fix: `markdown` verpflichtend, `[^\S\n]` statt `\s`, `\n*` statt `\n?`, plus `_join_wrapped` für den Trenner zwischen Hüllen-Inhalt und Rest. Betroffen waren nur Fences **ohne** Sprachkennung an Position 0.
 - **PDF-Export im eingefrorenen Build end-to-end geprüft** (2026-09-29, Kopie unter `%TEMP%\opencode\smoke\md-dis`, `plantuml.jar` danebenlegen): `Strg+P` öffnet „PDF-Optionen", Enter öffnet „Als PDF speichern", Pfad + Enter erzeugt eine gültige PDF. A4 hoch → 595×841 pt, 3 Seiten, 74.325 Bytes, 1 Bild, nur Print-Farben. Danach `md-dis.ini` mit `pageSize=A4/landscape=false/marginPreset=Normal`.
 - **Persistenz-Kette im eingefrorenen Build geprüft:** INI auf `pageSize=Letter`, `landscape=true`, `marginPreset=Weit`, `darkMode=false` gesetzt, App neu gestartet → Dialog übernimmt die Vorgaben, Ergebnis **792×612 pt** (Letter quer) und Textbeginn bei x=71,2 pt bei 25 mm Rand (Soll 70,9 pt). Die Vorschau enthielt kein `#0d1117`, Hellmodus also ebenfalls übernommen.
 - **Smoke-Test-Skript:** `Start-Process` + `WScript.Shell.SendKeys` funktioniert, aber der Prozess muss **im selben** PowerShell-Aufruf gestartet und bedient werden – sonst beendet das Tool ihn nach dem Aufruf.
@@ -75,7 +77,8 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 - **Nicht möglich:** Skalierung im PDF-Export. `printToPdf` hat in PyQt6 nur `(filePath, pageLayout, ranges)`, keinen `scaleFactor`. Ausweg für breite Diagramme: Querformat.
 - `_render_markdown` in `md_dis.py` war toter Code (seit dem Erstcommit `dd1a2c5` nie aufgerufen) und wurde entfernt – er hätte bei Reaktivierung doppelt skaliert. Belegt mit `git log -S`.
 - Source-Mode Tests laufen über `Start-Process python … --port <n>` + `curl.exe` (Achtung: bei `RedirectStandardOutput` werden Konsol-Ausgaben nur bei line-buffering sichtbar).
-- Kein automatisches Test-Framework – Verifikation manuell über Skripte im Smoke-Ordner.
+- Kein automatisches Test-Framework – Verifikation manuell über Skripte im Smoke-Ordner (`%TEMP%\opencode\verify_*.py`), bewusst **nicht** im Repo.
+- **Chromium-Test-Falle (zweite):** `loadFinished` muss **vor** `setHtml` verbunden werden, sonst geht das Signal verloren. `printToPdf` erwartet an 2. Argument ein `QPageLayout` – ein `QPageSize` an dieser Stelle stürzt hart mit `0xC0000409` ab, ebenso ein leerer stdout wegen Pufferung. Deshalb `sys.stdout.reconfigure(line_buffering=True)`.
 
 ## Wichtige Regeln & Fallstricke
 1. **Build nur mit Windows-Python** (py launcher aus `C:\Users\…\PythonSoftwareFoundation…`), workdir = UNC-Projektordner. WSL-Python (`wsl -d Ubuntu -- python3 -m py_compile`) nur für Syntaxcheck.
@@ -86,6 +89,7 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 6. Legt man `uploads/` auf das Root: Index listet sie; Refresh bei Upload via Watch (frische mtime).
 7. Uploads überschreiben gleichnamige Dateien in `uploads/` (kein Timestamp) – gewollt für Vorschau.
 8. **Keine Kommentare zu `md_dis.py` anlegen, die den Zoom- oder `baseUrl`-Pfad „korrigieren"**: beides ist Absicht, ein Durchreichen von `zoom_level` skaliert doppelt, ein Wechsel zurück auf `setUrl` zerstört relative Bilder.
+9. **`strip_frontmatter` nicht wieder auf `(?:markdown)?` erweitern:** die optionale Klammer ist genau der Bug aus 1.3.0. Ein ```markdown-Block am Dokumentanfang wird immer entpackt — auch wenn er nur ein *Beispiel* für Code zeigen sollte. Das ist gewollt, aber überraschend; bei Bedarf auf "Hülle umfasst das ganze Dokument" einschränken.
 
 ## Versionsregel
 `VERSION` in `md_render.py` ist die einzige Versionsangabe und hat die Form `MAJOR.MINOR.BUILD`.
@@ -105,10 +109,12 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 **MIT** ist verbindlich (so auch in `LICENSE` und auf GitHub erkannt). Kein GPL-2-Code mehr im Baum – der frühere 344-Zeilen-GPL-2-Block in `md_dis.py` wurde durch den MIT-Text ersetzt. Bei einer Lizenzänderung sind `LICENSE`, `md_dis.py` (`MIT_TEXT`, About-Dialog, Hilfemenü) und `README.md` gemeinsam anzupassen.
 
 ## Nächste Schritte (Vorschläge)
-1. Optional: automatisierten Regressionstest als Skript (Start-Server → curl-Checks → Upload → Watch) ins Repo legen.
-2. Optional: `--auth`-/Token-Schutz für Upload/Serverzugriff, wenn der Server über LAN exponiert wird – bisher nur localhost-Bindung getestet (im Banner steht die URL).
-3. Optional: GUI-Client „Datei an Server senden“ (wurde von Nutzer nicht gewählt; Browser-Upload stattdessen).
-4. Optional: Icon/Logo prüfen, deutsche README.
+1. **GUI-Build auf 1.3.1 nachziehen** – der eingefrorene Build kennt `![[…]]` und den `strip_frontmatter`-Fix noch nicht.
+2. **Server-Build auf 1.3.2 nachziehen** – drei Versionen hinter der Quelle.
+3. Optional: automatisierten Regressionstest als Skript (Start-Server → curl-Checks → Upload → Watch) ins Repo legen.
+4. Optional: `--auth`-/Token-Schutz für Upload/Serverzugriff, wenn der Server über LAN exponiert wird – bisher nur localhost-Bindung getestet (im Banner steht die URL).
+5. Optional: GUI-Client „Datei an Server senden“ (wurde von Nutzer nicht gewählt; Browser-Upload stattdessen).
+6. Optional: Icon/Logo prüfen, deutsche README.
 
 ## Suggested Skills
 - `tdd` (wenn Schritt 1 umgesetzt wird – Red-Green-Refactor passend für die HTTP-Routen).

@@ -7,14 +7,14 @@ A Markdown viewer for Windows with diagram support, available in **two variants*
 | File | `md_dis.py` (PyQt6 GUI) | `md_dis_server.py` (headless) |
 | Interaction | Local window | Browser (index, raw, live view, upload) |
 | Use case | Interactive viewing / editing workflow | Remote reading, sharing, CI, Watch |
-| Current build | `dist/md-dis/` — **1.2.1** | `dist/md-dis-server/` — 1.1.0, needs rebuild |
+| Current build | `dist/md-dis/` — 1.2.1 | `dist/md-dis-server/` — 1.1.0, needs rebuild |
 
 Both share a single **Qt-free render core** (`md_render.py`) — same output in GUI and server.
 
-**Status 2026-09-29:** the desktop build is current. The frozen server build is
-still on 1.1.0 and therefore predates the 1.2.x series — it neither shows the
-corrected MIT license text nor the new PlantUML JAR search. Rebuild it with
-`python build.py --server`; that yields 1.2.2.
+**Status 2026-09-29:** the source is at **1.3.0**, both frozen builds are older and
+therefore stale. `dist/md-dis/` (1.2.1) predates the `![[…]]` embed syntax and the
+`strip_frontmatter` fix; `dist/md-dis-server/` (1.1.0) additionally lacks the MIT
+and PlantUML JAR fixes. Rebuilding yields 1.3.1 for the GUI and 1.3.2 for the server.
 
 ---
 
@@ -26,7 +26,8 @@ corrected MIT license text nor the new PlantUML JAR search. Rebuild it with
   - **Mermaid** — via `mmdc` (mermaid-cli), if installed
 - Dark / light theme toggle
 - Zoom (`Ctrl+` / `Ctrl-` / `Ctrl+0`, mouse wheel)
-- **PDF export** (`Ctrl+P`) with page format, orientation and margins
+- **Image embed** — `![[pfad/grafik.png]]`, optionally `![[grafik.png|Alt-Text]]`
+- **PDF export** (`Ctrl+P`) with page format, orientation and margin
 - File Watch with auto-reload (`F5`)
 - German UI; yaml frontmatter rendered as an info box
 - Headless HTTP server also supports **browser upload** of `.md` files
@@ -67,6 +68,15 @@ Keyboard shortcuts:
 | `F2` | Edit file |
 | `F1` | Help |
 | `Esc` / `Ctrl+W` | Close / quit |
+
+**Image embed.** `[[ … ]]` is not valid Markdown and rendered as literal text
+before, so `![[grafik.png]]` is free to mean "put the image here" without
+changing any existing document. Inside code blocks and inline code the syntax
+stays visible as text, so it can be documented without being executed. Only
+`.png`, `.jpg`, `.jpeg`, `.gif`, `.svg` and `.webp` are embedded; for anything
+else the text stays visible. The result is identical to `![alt](grafik.png)`, so
+the usual image syntax remains the better choice whenever a caption is wanted.
+Works in the desktop app and in the server.
 
 **PDF export.** `Ctrl+P` opens a dialog for page format (A4, A3, A5, Letter,
 Legal, Executive, Tabloid), orientation and margin preset, then asks for the
@@ -124,7 +134,7 @@ Note: the frozen executables must be run from a **local** Windows path
 
 ```python
 # md_render.py
-VERSION = "1.2.1"
+VERSION = "1.3.0"
 ```
 
 Both variants import `VERSION` from the render core, so a frozen executable
@@ -154,14 +164,10 @@ version number.
 
 | Where | What you see |
 |---|---|
-| Desktop: `Help` → `Über / Version` (or `F1` → About) | `md-dis 1.2.1` plus PyQt/Qt versions and the license |
+| Desktop: `Help` → `Über / Version` (or `F1` → About) | `md-dis <version>` plus PyQt/Qt versions and the license |
 | Desktop: window properties / task manager | The version from `QApplication.setApplicationVersion` |
-| Server: startup banner | `md-dis-server v1.1.0 - http://127.0.0.1:8080` |
-| Server: HTTP response header | `Server: md-dis-server/1.1.0 Python/3.13.14` |
-
-The values above are what the current frozen builds actually print — the server
-build is still at 1.1.0, the desktop build at 1.2.1. A rebuilt server would show
-1.2.2 plus the Python version of the interpreter it was frozen with.
+| Server: startup banner | `md-dis-server v<version> - http://127.0.0.1:8080` |
+| Server: HTTP response header | `Server: md-dis-server/<version> Python/<x.y.z>` |
 
 Quick check of a frozen build:
 
@@ -169,11 +175,16 @@ Quick check of a frozen build:
 dist/md-dis-server/md-dis-server.exe --port 8080
 ```
 
+The source version moves ahead of the frozen builds, so a binary reports the
+version it was frozen with, not the current one. `dist/md-dis/` currently prints
+1.2.1 while the source is at 1.3.0.
+
 ### Changelog
 
 | Version | Date | Changes |
 |---|---|---|
-| **1.2.1** | 2026-09-29 | PDF export (`Ctrl+P`) with page format, orientation and margin presets, always light regardless of theme. Theme, zoom and PDF options persist in `md-dis.ini` next to the executable. Fixed relative image paths and `src="…"`. Dead `_render_markdown` removed. Desktop build current. |
+| **1.3.0** | 2026-09-29 | Image embed `![[grafik.png]]` with optional `\|Alt-Text`, for `.png/.jpg/.jpeg/.gif/.svg/.webp`, in desktop app and server. Fixed `strip_frontmatter`, which unwrapped *any* document starting with a bare ` ``` ` fence and glued the following line onto the code (`code# Titel`). |
+| **1.2.1** | 2026-09-29 | PDF export (`Ctrl+P`) with page format, orientation and margin presets, always light regardless of theme. Theme, zoom and PDF options persist in `md-dis.ini` next to the executable. Fixed relative image paths and `src="…"`. Dead `_render_markdown` removed. |
 | **1.2.0** | 2026-09-29 | Corrected MIT license declaration in the About dialog and README. `plantuml.jar` is now searched in `$MD_DIS_PLANTUML_JAR` → program directory → `%LOCALAPPDATA%\md-dis`, downloaded atomically. Added version management to `build.py` (`--set-version`, automatic build number). |
 | **1.1.0** | 2026-09-24 | Security and performance overhaul (`a279401`): browser upload, path-traversal 404, foreign `Host` header 403, version in the response header, caching of rendered output. |
 | **1.0.0** | 2026-09-20 | Initial release (`dd1a2c5`): render core, PyQt6 desktop app, stdlib-only HTTP server. |

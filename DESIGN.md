@@ -24,11 +24,43 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
 ### Markdown-Unterstützung
 - GitHub-Flavored Markdown (Tabellen, Code-Blöcke, Strikethrough, etc.)
 - Umlaute / Sonderzeichen (DE-korrektes Rendering)
+- Bildeinbettung `![[grafik.png]]` und `![[grafik.png|Alt-Text]]` (siehe unten)
+
+#### Bildeinbettung `![[…]]`
+- Als `InlineProcessor` in `md_render.py` (`EmbedImageProcessor`), registriert mit
+  Priorität **175** auf der `markdown.Markdown`-Instanz in `markdown_to_html`.
+- **Warum Inline-Prozessor und kein Regex-Vorabpass:** Ein Vorabpass auf dem
+  Markdown-Text greift auch in Code-Fences und Inline-Code — genau das Problem,
+  das der PlantUML-/Mermaid-Vorabpass bei `md_render.py:802` hat. Inline-Prozessoren
+  laufen nur in Fließtext, in `<pre>`/`<code>` bleibt die Syntax sichtbarer Text.
+- Priorität 175 liegt **vor** dem eingebauten Bildmuster (160), `![…](…)` bleibt
+  unverändert.
+- Erzeugt `etree.Element("img")` statt HTML-String, dadurch sind Attributwerte
+  automatisch escaped. `alt` wird immer gesetzt, sonst liest ein Screenreader den
+  Dateinamen vor.
+- Zugelassen sind dieselben Endungen wie in `IMAGE_SUFFIXES` des Servers
+  (`.png .jpg .jpeg .gif .svg .webp`), damit GUI und Server dasselbe behandeln.
+  Alles andere bleibt sichtbarer Text.
+- Bewusst **keine** Breitenangabe (`![[b.png|300]]`): `attr_list` ist nicht aktiv,
+  und `max-width: 100%` begrenzt Bilder ohnehin.
+- Da `![[…]]` vorher kein gültiges Markdown war, wird kein bestehendes Dokument
+  umgedeutet.
 
 ### Diagramm-Unterstützung
 - **Mermaid**: Server-seitig via `mmdc` (mermaid-cli, npm install -g @mermaid-js/mermaid-cli)
 - **PlantUML**: Lokales Java + `plantuml.jar` (im gleichen Verzeichnis wie die .exe)
   - Automatischer Download beim ersten Start, wenn Java vorhanden ist
+
+### Frontmatter
+- `strip_frontmatter` in `md_render.py` erkennt YAML-Frontmatter am Dateianfang und
+  eine ```markdown-Hülle.
+- Fehler ab 1.3.0 behoben: das Hüllen-Muster verlangt **verpflichtend** `markdown`.
+  Vorher hat auch jeder **nackte** ```-Fence am Dokumentanfang das Muster getroffen,
+  wodurch Code als Markdown gerendert wurde — Links und Bilder wurden also lebendig.
+- `[^\S\n]` statt `\s`, damit der horizontale Whitespace nicht über Zeilengrenzen
+  greift, und `\n*` statt `\n?`, damit die Folgezeile nicht angeklebt wird.
+- `_join_wrapped` setzt Inhalt und Folge mit einem Trenner zusammen; vorher ergab
+  `# T` + `# Nachfolger` das Wort `# T# Nachfolger`.
 
 ### Darstellung
 - Scrollbar

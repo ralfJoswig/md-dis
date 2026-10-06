@@ -14,13 +14,15 @@ import sys
 import tempfile
 import threading
 import urllib.request
+import xml.etree.ElementTree as etree
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import markdown
+from markdown.inlinepatterns import InlineProcessor
 
-VERSION = "1.2.1"
+VERSION = "1.3.9"
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -681,6 +683,13 @@ def render_mermaid(code: str) -> str:
     return _mermaid(code)[0]
 
 
+def _join_wrapped(head: str, tail: str) -> str:
+    """Fuegt Inhalt und Folge zusammen, ohne sie ohne Trenner ankleben zu lassen."""
+    if head and tail:
+        return head + "\n" + tail
+    return head + tail
+
+
 def strip_frontmatter(md_text: str) -> tuple[str, str]:
     """Strip YAML frontmatter from markdown text.
 
@@ -691,8 +700,13 @@ def strip_frontmatter(md_text: str) -> tuple[str, str]:
     Returns (frontmatter, content) tuple.
     Content includes everything after the wrapper (e.g. PlantUML blocks).
     """
-    # Case 1: Content wrapped in markdown code block
-    wrapped_pattern = r'^```(?:markdown)?\s*\n(.*?)\n```\s*\n?(.*)'
+    # Case 1: Content wrapped in markdown code block.
+    # 'markdown' ist Pflicht, sonst wuerde jeder nackte ```-Fence am Dateianfang
+    # mit-entpackt und der Code als Markdown gerendert. [^\S\n] statt \s, damit der
+    # horizontale Whitespace nicht ueber Zeilengrenzen greift, und \n* statt \n?,
+    # damit die Folgezeile nicht an den Code angeklebt wird ("code# Titel") und die
+    # Huelle auch am Dokumentende noch greift.
+    wrapped_pattern = r'^```markdown[^\S\n]*\n(.*?)\n```[^\S\n]*\n*(.*)'
     match = re.match(wrapped_pattern, md_text, re.DOTALL)
     if match:
         inner_content = match.group(1)
@@ -702,10 +716,10 @@ def strip_frontmatter(md_text: str) -> tuple[str, str]:
         fm_match = re.match(fm_pattern, inner_content, re.DOTALL)
         if fm_match:
             frontmatter = fm_match.group(1).strip()
-            content = inner_content[fm_match.end():] + remaining
+            content = _join_wrapped(inner_content[fm_match.end():], remaining)
             return frontmatter, content
         # No frontmatter, just return the inner content + remaining
-        return "", inner_content + remaining
+        return "", _join_wrapped(inner_content, remaining)
 
     # Case 2: Standard YAML frontmatter at start of file
     pattern = r'^---\s*\n(.*?)\n---\s*\n'
@@ -771,6 +785,36 @@ def _cache_put(key, svg):
             _svg_cache.popitem(last=False)
 
 
+# Explizite Einbettung: ![[pfad/zur/grafik.png]] und ![[grafik.png|Alternativtext]]
+# ergeben ein <img>. Bewusst als InlineProcessor und nicht als Regex-Vorabpass auf
+# dem Markdown-Text: Inline-Prozessoren laufen nicht in Code-Fences oder in
+# Inline-Code, ein Vorabpass dagegen schon (vgl. PlantUML/Mermaid weiter unten).
+EMBED_IMAGE_PATTERN = r"\!\[\[([^\]\|]+)(?:\|([^\]]*))?\]\]"
+
+# Bewusst identisch zu IMAGE_SUFFIXES in md_dis_server.py, damit GUI und Server
+# dieselben Dateien als Bild behandeln. Fuer andere Formate bleibt ![[...]] bei
+# sichtbarem Text stehen; die gewoehnliche ![...](...)-Syntax bettet weiterhin
+# beliebige Formate ein.
+EMBED_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
+
+
+class EmbedImageProcessor(InlineProcessor):
+    """Wandelt ![[datei.png]] in ein <img>-Element."""
+
+    def handleMatch(self, m, data):
+        target = m.group(1).strip()
+        # Kein Bildformat: nichts einbetten, der Text bleibt sichtbar.
+        if not target.lower().endswith(EMBED_IMAGE_SUFFIXES):
+            return None, None, None
+        el = etree.Element("img")
+        el.set("src", target)
+        # alt immer setzen - ein fehlendes alt liest ein Screenreader als
+        # Dateinamen vor, das eingebaute Bildmuster von Python-Markdown
+        # verhaelt sich genauso.
+        el.set("alt", (m.group(2) or "").strip())
+        return el, m.start(0), m.end(0)
+
+
 def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 1.0, progress_callback=None,
                      sandbox: bool = False) -> str:
     """Convert markdown text to full HTML page.
@@ -818,6 +862,8 @@ def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 
     }
 
     md = markdown.Markdown(extensions=extensions, extension_configs=extension_configs)
+    # Vor das eingebaute Bildmuster (Prioritaet 160), damit ![...] unberuehrt bleibt.
+    md.inlinePatterns.register(EmbedImageProcessor(EMBED_IMAGE_PATTERN), "md_dis_embed", 175)
     content = md.convert(md_text)
 
     # Diagramme rendern – bereits bekannte SVGs kommen aus dem Cache
