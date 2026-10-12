@@ -22,7 +22,7 @@ from pathlib import Path
 import markdown
 from markdown.inlinepatterns import InlineProcessor
 
-VERSION = "1.3.9"
+VERSION = "1.4.2"
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -33,8 +33,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
+<div class="md-page" data-toc-has="{has_toc}">
+{toc}
+<div class="md-content">
 <div class="markdown-body">
 {content}
+</div>
+</div>
 </div>
 </body>
 </html>
@@ -47,9 +52,50 @@ body {{
     line-height: 1.6;
     color: #24292e;
     background-color: #ffffff;
+}}
+/* Zweispaltiges Grundlayout: links die Inhaltsverzeichnis-Sidebar, rechts der
+   Text. Der Wrapper ist immer vorhanden, damit Server-Toolbar-Injektion und
+   CSS auch ohne Sidebar dieselbe Struktur vorfinden. */
+.md-page {{
     max-width: 90%;
     margin: 0 auto;
     padding: 20px 40px;
+    display: flex;
+    align-items: flex-start;
+    gap: 32px;
+}}
+.md-content {{
+    flex: 1 1 auto;
+    min-width: 0;
+}}
+.md-toc {{
+    position: sticky;
+    top: 0;
+    flex: 0 0 240px;
+    align-self: flex-start;
+    max-height: 100vh;
+    overflow-y: auto;
+    font-size: 0.9em;
+    padding-right: 12px;
+    border-right: 1px solid #eaecef;
+}}
+.md-toc ul {{
+    list-style: none;
+    margin: 0;
+    padding-left: 0.9em;
+}}
+.md-toc li {{
+    margin: 0.15em 0;
+}}
+.md-toc a {{
+    color: #0366d6;
+}}
+.md-toc a:hover {{
+    text-decoration: underline;
+}}
+@media (max-width: 900px) {{
+    .md-page {{ display: block; }}
+    .md-toc {{ display: none; }}
 }}
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
 .markdown-body h4, .markdown-body h5, .markdown-body h6 {{
@@ -57,6 +103,8 @@ body {{
     margin-bottom: 16px;
     font-weight: 600;
     line-height: 1.25;
+    /* Anker aus der Sidebar duerfen nicht unter der Sticky-Toolbar landen */
+    scroll-margin-top: 56px;
 }}
 .markdown-body h1 {{ font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }}
 .markdown-body h2 {{ font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }}
@@ -147,9 +195,50 @@ body {{
     line-height: 1.6;
     color: #c9d1d9;
     background-color: #0d1117;
+}}
+/* Zweispaltiges Grundlayout: links die Inhaltsverzeichnis-Sidebar, rechts der
+   Text. Der Wrapper ist immer vorhanden, damit Server-Toolbar-Injektion und
+   CSS auch ohne Sidebar dieselbe Struktur vorfinden. */
+.md-page {{
     max-width: 90%;
     margin: 0 auto;
     padding: 20px 40px;
+    display: flex;
+    align-items: flex-start;
+    gap: 32px;
+}}
+.md-content {{
+    flex: 1 1 auto;
+    min-width: 0;
+}}
+.md-toc {{
+    position: sticky;
+    top: 0;
+    flex: 0 0 240px;
+    align-self: flex-start;
+    max-height: 100vh;
+    overflow-y: auto;
+    font-size: 0.9em;
+    padding-right: 12px;
+    border-right: 1px solid #21262d;
+}}
+.md-toc ul {{
+    list-style: none;
+    margin: 0;
+    padding-left: 0.9em;
+}}
+.md-toc li {{
+    margin: 0.15em 0;
+}}
+.md-toc a {{
+    color: #58a6ff;
+}}
+.md-toc a:hover {{
+    text-decoration: underline;
+}}
+@media (max-width: 900px) {{
+    .md-page {{ display: block; }}
+    .md-toc {{ display: none; }}
 }}
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
 .markdown-body h4, .markdown-body h5, .markdown-body h6 {{
@@ -158,6 +247,8 @@ body {{
     font-weight: 600;
     line-height: 1.25;
     color: #c9d1d9;
+    /* Anker aus der Sidebar duerfen nicht unter der Sticky-Toolbar landen */
+    scroll-margin-top: 56px;
 }}
 .markdown-body h1 {{ font-size: 2em; border-bottom: 1px solid #21262d; padding-bottom: 0.3em; }}
 .markdown-body h2 {{ font-size: 1.5em; border-bottom: 1px solid #21262d; padding-bottom: 0.3em; }}
@@ -258,6 +349,17 @@ CSS_PRINT = """
         max-width: 100% !important;
         margin: 0 !important;
         padding: 0 !important;
+    }}
+    /* Die Inhaltsverzeichnis-Sidebar ist eine Bildschirmhilfe und gehoert nicht
+       ins PDF: Layout zurueck auf einspaltig, Sidebar ausblenden. */
+    .md-page {{
+        display: block !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }}
+    .md-toc {{
+        display: none !important;
     }}
     /* Chromium druckt Hintergruende nur auf ausdrueckliche Anforderung */
     html, body, .markdown-body, pre, code, table, tr, th, td, .frontmatter {{
@@ -816,14 +918,21 @@ class EmbedImageProcessor(InlineProcessor):
 
 
 def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 1.0, progress_callback=None,
-                     sandbox: bool = False) -> str:
+                     sandbox: bool = False, toc: bool = False) -> str:
     """Convert markdown text to full HTML page.
 
     sandbox=True renders PlantUML without access to local files/URLs (for untrusted input).
+    toc=True haengt links ein sticky Inhaltsverzeichnis aus den Ueberschriften
+    h1-h3 an (sofern das Dokument welche hat).
     """
 
     # Strip YAML frontmatter if present
     frontmatter, md_text = strip_frontmatter(md_text)
+
+    # Ein im Text platzierter [TOC]-Marker wird von der toc-Extension bereits
+    # inline ersetzt; dann keine zusaetzliche Sidebar erzeugen (sonst zwei
+    # Verzeichnisse im Dokument).
+    has_toc_marker = "[TOC]" in md_text
 
     # Extract PlantUML blocks BEFORE markdown conversion
     # (otherwise pygments/codehilite overwrites the language class)
@@ -858,13 +967,30 @@ def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 
         'markdown.extensions.codehilite': {
             'css_class': 'highlight',
             'guess_lang': True,
-        }
+        },
+        # Verzeichnis nur bis Ebene 3; die Extension vergibt zugleich die ids
+        # der Ueberschriften, damit die Anker der Sidebar ziehen.
+        'markdown.extensions.toc': {
+            'toc_depth': '1-3',
+            'anchorlink': False,
+            'permalink': False,
+        },
     }
 
     md = markdown.Markdown(extensions=extensions, extension_configs=extension_configs)
     # Vor das eingebaute Bildmuster (Prioritaet 160), damit ![...] unberuehrt bleibt.
     md.inlinePatterns.register(EmbedImageProcessor(EMBED_IMAGE_PATTERN), "md_dis_embed", 175)
     content = md.convert(md_text)
+
+    # Inhaltsverzeichnis aus den Ueberschriften (h1-h3). md.toc liefert das
+    # fertige <div class="toc">...</div>; die toc-Extension vergibt dabei auch
+    # die id der Ueberschriften, auf die die Anker zeigen.
+    # Wichtig: md.toc ist auch ohne Ueberschriften nicht leer (leeres <ul>),
+    # deshalb entscheidet md.toc_tokens. Die Sidebar ist ein eigenes <nav>,
+    # damit ein inline platzierter [TOC]-Marker (Klasse "toc") nicht wie die
+    # Sidebar aussieht.
+    sidebar_available = bool(md.toc_tokens) and not has_toc_marker
+    toc_html = f'<nav class="md-toc">{md.toc}</nav>' if (toc and sidebar_available) else ""
 
     # Diagramme rendern – bereits bekannte SVGs kommen aus dem Cache
     rendered = {}
@@ -929,4 +1055,6 @@ def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 
     return HTML_TEMPLATE.format(
         css=css,
         content=content,
+        toc=toc_html,
+        has_toc="1" if sidebar_available else "0",
     )

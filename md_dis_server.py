@@ -80,6 +80,20 @@ def _is_hidden(rel: str) -> bool:
     return any(part.startswith(".") for part in rel.replace("\\", "/").split("/") if part)
 
 
+def _toc_setting(query) -> bool:
+    """Effektiver Sidebar-Zustand: ?toc=0/1 übersteuert den Server-Standard.
+
+    Ohne (gültigen) Parameter gilt der Wert aus --no-toc / --toc.
+    """
+    if query:
+        value = query.get("toc", [""])[0].strip().lower()
+        if value in ("0", "off", "false", "nein", "aus"):
+            return False
+        if value in ("1", "on", "true", "ja", "an"):
+            return True
+    return CONFIG["toc"]
+
+
 def file_stamp(path: Path) -> str:
     """Kompakter Änderungsstempel für den Watch-Modus."""
     try:
@@ -192,7 +206,7 @@ class MDDisHandler(BaseHTTPRequestHandler):
             elif url_path.startswith("/raw/"):
                 self._handle_raw(url_path[len("/raw/"):])
             else:
-                self._handle_doc_or_static(url_path, start)
+                self._handle_doc_or_static(url_path, start, query)
         except Exception:  # pragma: no cover – letzter Notnagel
             traceback.print_exc()
             self._last_status = 500
@@ -376,21 +390,21 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
         self._send(200, body, "text/plain; charset=utf-8")
 
     # ------------------------------------------------------- doc or static
-    def _send_markdown(self, rel: str, target: Path, start_ns: int):
+    def _send_markdown(self, rel: str, target: Path, start_ns: int, toc: bool):
         dark = CONFIG["dark"]
         zoom = CONFIG["zoom"]
-        # Ein Eintrag pro Datei; ältere Stände werden überschrieben
-        key = str(target.resolve())
+        # Ein Eintrag pro Datei und TOC-Zustand; ältere Stände werden überschrieben
+        key = (str(target.resolve()), toc)
         server: MDDisServer = self.server
         with server._lock:
             entry = server._cache.get(key)
         cached = entry[1] if entry and entry[0] == start_ns else None
         if cached is None:
             text = target.read_text(encoding="utf-8")
-            html = markdown_to_html(text, dark_mode=dark, zoom_level=zoom, sandbox=True)
+            html = markdown_to_html(text, dark_mode=dark, zoom_level=zoom, sandbox=True, toc=toc)
             if CONFIG["watch"]:
                 html = _inject_watch(html, rel)
-            html = _inject_toolbar(html, rel, dark)
+            html = _inject_toolbar(html, rel, dark, toc)
             with server._lock:
                 server._cache[key] = (start_ns, html)
         else:
@@ -398,7 +412,7 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
         self._last_status = 200
         self._send_text(200, html, "text/html; charset=utf-8")
 
-    def _handle_doc_or_static(self, url_path: str, start: float):
+    def _handle_doc_or_static(self, url_path: str, start: float, query=None):
         root = CONFIG["root"]
         rel = url_path.lstrip("/")
         target = None if _is_hidden(rel) else resolve_within_root(root, rel)
@@ -409,7 +423,7 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
         if target.is_file():
             if target.suffix.lower() in MD_SUFFIXES:
                 stamp = int(target.stat().st_mtime_ns)
-                self._send_markdown(rel, target, stamp)
+                self._send_markdown(rel, target, stamp, _toc_setting(query))
             elif target.suffix.lower() not in IMAGE_SUFFIXES:
                 self._last_status = 404
                 self._send_text(404, f"Nicht gefunden: {url_path}")
@@ -436,7 +450,7 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
         pass
 
 
-def _inject_toolbar(html: str, rel: str, dark: bool) -> str:
+def _inject_toolbar(html: str, rel: str, dark: bool, toc: bool) -> str:
     bg = "#161b22" if dark else "#f6f8fa"
     fg = "#c9d1d9" if dark else "#24292e"
     link = "#58a6ff" if dark else "#0366d6"
@@ -445,12 +459,21 @@ def _inject_toolbar(html: str, rel: str, dark: bool) -> str:
     index_link = ""
     if CONFIG.get("redirect") != rel:
         index_link = f'<a href="/" style="color:{link};">&#9664; Index</a>&nbsp;&nbsp;'
+    # Umschalt-Link nur, wenn das Dokument überhaupt Überschriften hat. Der
+    # relative Query-Link behält Pfad und Watch-Zustand bei (location.reload()).
+    toc_link = ""
+    if 'data-toc-has="1"' in html:
+        if toc:
+            toc_link = f'<a href="?toc=0" style="color:{link};">Verzeichnis ausblenden</a>&nbsp;&nbsp;'
+        else:
+            toc_link = f'<a href="?toc=1" style="color:{link};">Verzeichnis einblenden</a>&nbsp;&nbsp;'
     bar = (f'<div style="position:sticky;top:0;background:{bg};color:{fg};'
-           f'border-bottom:1px solid {border};padding:8px 12px;margin:0 -40px;'
+           f'border-bottom:1px solid {border};padding:8px 12px;margin:0 0 12px;'
            f'font-size:13px;">'
            f'{index_link}'
            f'<a href="/upload" style="color:{link};">Hochladen</a>&nbsp;&nbsp;'
-           f'<a href="{raw_url}" style="color:{link};">Rohdaten</a></div>')
+           f'<a href="{raw_url}" style="color:{link};">Rohdaten</a>&nbsp;&nbsp;'
+           f'{toc_link}</div>')
     if "<div class=\"markdown-body\">" in html:
         return html.replace('<div class="markdown-body">', bar + '<div class="markdown-body">', 1)
     return bar + html
@@ -483,6 +506,8 @@ def main(argv=None):
                     help="Schriftgrößen-Faktor (Standard: 1.0)")
     ap.add_argument("--watch", action="store_true",
                     help="Bei Dateiänderung automatisch neu laden (Browser-polling)")
+    ap.add_argument("--no-toc", dest="toc", action="store_false", default=True,
+                    help="Inhaltsverzeichnis-Sidebar standardmäßig ausblenden")
     args = ap.parse_args(argv)
 
     root = Path(args.root).expanduser().resolve()
@@ -510,6 +535,7 @@ def main(argv=None):
         dark=args.dark,
         zoom=args.zoom,
         watch=args.watch,
+        toc=args.toc,
         redirect=redirect,
         # Bei Loopback-Bindung nur localhost-Host-Header zulassen (DNS-Rebinding)
         allowed_hosts=({f"localhost:{args.port}", f"127.0.0.1:{args.port}", f"[::1]:{args.port}"}
@@ -521,7 +547,7 @@ def main(argv=None):
     print(f"  Wurzel: {root}")
     if redirect:
         print(f"  Datei:  {redirect} (direkte Anzeige)")
-    print(f"  Theme:  {'dunkel' if args.dark else 'hell'} | Zoom: x{args.zoom} | Watch: {'an' if args.watch else 'aus'}")
+    print(f"  Theme:  {'dunkel' if args.dark else 'hell'} | Zoom: x{args.zoom} | Watch: {'an' if args.watch else 'aus'} | Verzeichnis: {'an' if args.toc else 'aus'}")
     print("  Beenden mit Strg+C.")
     try:
         server.serve_forever()

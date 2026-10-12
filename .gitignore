@@ -13,6 +13,10 @@ uploads/
 preview/
 md-dis.ini
 
+# Build-Logs (aus manuellen Build-Läufen)
+*.err
+*.out
+
 # Windows ADS-Marker (von Dateien aus der WSL-Umgebung)
 *:Zone.Identifier
 

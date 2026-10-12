@@ -68,6 +68,33 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
 - Farbschema: Hell/Dunkel Toggle
 - Farbschema und Zoom werden in `md-dis.ini` neben der .exe gespeichert
 
+#### Inhaltsverzeichnis (Sidebar)
+- Automatisch aus den Überschriften **h1–h3** erzeugt; die toc-Extension von
+  Python-Markdown war bereits aktiv (sie vergibt die `id` der Überschriften),
+  es fehlte nur die Auswertung.
+- `markdown_to_html(..., toc=True)` hängt links ein `<nav class="md-toc">` mit
+  dem Verzeichnis an. Die Anker sind reine HTML-`#id`-Sprünge und funktionieren
+  deshalb ohne JavaScript (GUI hat JS aus).
+- Aufbau: Das Template hat einen festen Wrapper `.md-page > (.md-toc? +
+  .md-content > .markdown-body)`. Der Wrapper ist **immer** vorhanden – auch
+  ohne Sidebar –, damit die Server-Toolbar-Injektion (sucht
+  `<div class="markdown-body">`) und das CSS nicht auseinanderlaufen.
+- `md.toc` ist auch ohne Überschriften nicht leer (leeres `<ul>`), deshalb
+  entscheidet `bool(md.toc_tokens)`, ob überhaupt Einträge da sind. Das
+  Attribut `data-toc-has` auf `.md-page` transportiert das an den Server.
+- Eigene `<nav class="md-toc">`-Hülle statt `toc_class`: Ein vom Autor
+  platzierter `[TOC]`-Marker erzeugt ein `<div class="toc">`; mit gemeinsamer
+  Klasse hätte dieser Marker wie die Sidebar ausgesehen. Enthält ein Dokument
+  `[TOC]`, wird **keine** zusätzliche Sidebar erzeugt (sonst zwei Verzeichnisse).
+- `position: sticky`, feste Breite 240 px, `max-height: 100vh`. Unter 900 px
+  Breite (Media-Query) tritt die Sidebar zur Seite, der Text bleibt lesbar.
+- **PDF:** `@media print` setzt `.md-page` auf `display: block` und blendet
+  `.md-toc` aus – die PDF bleibt wie vor dem Feature. `scroll-margin-top`
+  verhindert, dass angesprungene Überschriften unter der Server-Toolbar landen.
+- Toggle: GUI-Action „Verzeichnis“ (Strg+T, `appearance/showToc` in der INI);
+  Server `--no-toc` plus `?toc=0/1`-Link in der Toolbar. Der Server-Cache
+  schlüsselt auf `(Pfad, toc-Zustand)`.
+
 ### PDF-Export
 - `Ctrl+P` → Dialog für Seitenformat, Ausrichtung und Rand-Preset
 - Erzeugung über `QWebEnginePage.printToPdf`, asynchron; Ergebnis meldet `pdfPrintingFinished`
@@ -113,6 +140,7 @@ md-dis/
 | Strg+- | Verkleinern |
 | Strg+0 | Zoom zurücksetzen |
 | Strg+D | Hell/Dunkel umschalten |
+| Strg+T | Inhaltsverzeichnis-Sidebar ein-/ausblenden |
 | Strg+P | Vorschau als PDF speichern |
 | Strg+F | Suchen |
 | F2 | Bearbeiten |

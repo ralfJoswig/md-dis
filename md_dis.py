@@ -309,6 +309,7 @@ class MarkdownViewer(QMainWindow):
         self.pdf_page_size = self.settings.value("pdf/pageSize", "A4", type=str)
         self.pdf_landscape = self.settings.value("pdf/landscape", False, type=bool)
         self.pdf_margin = self.settings.value("pdf/marginPreset", "Normal", type=str)
+        self.show_toc = self.settings.value("appearance/showToc", True, type=bool)
 
         self.current_file = None
         self.web_view = None
@@ -382,6 +383,7 @@ class MarkdownViewer(QMainWindow):
         self.settings.setValue("pdf/pageSize", self.pdf_page_size)
         self.settings.setValue("pdf/landscape", self.pdf_landscape)
         self.settings.setValue("pdf/marginPreset", self.pdf_margin)
+        self.settings.setValue("appearance/showToc", self.show_toc)
         self.settings.sync()
         if self.settings.status() == QSettings.Status.AccessError:
             # z. B. read-only installiert – ab jetzt nur noch im Speicher
@@ -485,6 +487,18 @@ class MarkdownViewer(QMainWindow):
         self.theme_action.setShortcut(QKeySequence("Ctrl+D"))
         self.theme_action.triggered.connect(self._toggle_theme)
         toolbar.addAction(self.theme_action)
+
+        # Inhaltsverzeichnis-Sidebar ein-/ausblenden. Der Zustand steckt im
+        # gerenderten HTML, deshalb loest das Umschalten ein Neurendern aus
+        # (wie beim Theme-Wechsel). setChecked vor dem Verbinden, damit der
+        # Startzustand aus der INI kein Umschalten ausloest.
+        self.toc_action = QAction("Verzeichnis", self)
+        self.toc_action.setCheckable(True)
+        self.toc_action.setChecked(self.show_toc)
+        self.toc_action.setShortcut(QKeySequence("Ctrl+T"))
+        self.toc_action.setToolTip("Inhaltsverzeichnis ein-/ausblenden")
+        self.toc_action.toggled.connect(self._toggle_toc)
+        toolbar.addAction(self.toc_action)
 
         # PDF export – nach dem Theme, weil es die aktuelle Darstellung nutzt
         self.pdf_action = QAction("Als PDF speichern…", self)
@@ -817,7 +831,8 @@ class MarkdownViewer(QMainWindow):
         # Durchreichen wuerde die Schriftgroesse zusaetzlich in das CSS
         # einbrennen und damit doppelt skalieren.
         html = markdown_to_html(md_text, self.dark_mode,
-                                 progress_callback=on_plantuml_progress)
+                                 progress_callback=on_plantuml_progress,
+                                 toc=self.show_toc)
         self._ensure_web_view()
         if self.web_view is not None:
             if not self.edit_mode:
@@ -961,6 +976,12 @@ class MarkdownViewer(QMainWindow):
             self.theme_action.setText("Hellmodus")
         else:
             self.theme_action.setText("Dunkelmodus")
+        self._save_settings()
+        self._reload_current()
+
+    def _toggle_toc(self, checked):
+        """Sidebar ein-/ausblenden: Zustand merken und Vorschau neu rendern."""
+        self.show_toc = bool(checked)
         self._save_settings()
         self._reload_current()
 

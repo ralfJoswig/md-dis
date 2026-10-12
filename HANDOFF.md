@@ -1,6 +1,6 @@
 # Handoff – md-dis
 
-Stand: 2026-09-29 (letzte Sitzung: Lizenz auf MIT vereinheitlicht, plantuml.jar-Suche über mehrere Orte, Doku bereinigt)
+Stand: 2026-10-12 (letzte Sitzung: automatisches Inhaltsverzeichnis als Sticky-Sidebar in GUI und Server; MINOR auf 1.4 angehoben)
 
 ## Projekt
 `md-dis` = Windows-Markdown-Viewer (PyQt6/QWebEngine, Dark-Mode, Zoom, Watch, PlantUML/Mermaid)
@@ -20,19 +20,20 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 | `plantuml.jar` | echtes JAR (28,5 MB) – liegt im Projektwurzelverzeichnis, wird von Source-Aufrufen und Frozen-EXEs (Ordner der Exe) genutzt. Gitignored, daher nach jedem Clone erneut bereitzustellen. |
 
 ## Server-Features (`md_dis_server.py`)
-- Optionen: `--host` (127.0.0.1), `--port` (8080), `--root`, `--dark`, `--zoom`, `--watch`; optionales **Positionsargument `file`**.
+- Optionen: `--host` (127.0.0.1), `--port` (8080), `--root`, `--dark`, `--zoom`, `--watch`, `--no-toc` (Verzeichnis-Sidebar aus); optionales **Positionsargument `file`**.
 - Routen:
   - `GET /` → Index-Liste aller `.md/.markdown` unter `--root`; bei `--file` → **302** auf `/<datei>`.
-  - `GET /<pfad>.md` → gerendertes HTML (Toolbar: Index/Link je nach Redirect + „Hochladen“ + „Rohdaten“; Watch-Skript bei `--watch`).
+  - `GET /<pfad>.md` → gerendertes HTML (Toolbar: Index/Link je nach Redirect + „Hochladen“ + „Rohdaten“ + „Verzeichnis ein-/ausblenden“; Watch-Skript bei `--watch`). `?toc=0/1` übersteuert den Server-Standard pro Anfrage.
   - `GET /raw/<pfad>` (`text/plain`), `GET /poll?path=` (mtime_ns-Stempel), statische Dateien (mimetypes).
   - **Upload (neu):** `GET /upload` → Formular; `POST /upload` (multipart/form-data, stdlib-only-Parser, kein `cgi` – in Py3.13 entfernt) → speichert unter `<Root>/uploads/<bereinigter Name>`, 303-Redirect auf Anzeige. Schutz: nur `.md/.markdown` (sonst 400), Dateiname gesäubert (Postfix `_sanitize_filename`), 10-MB-Limit (413), `resolve_within_root` blockiert Traversal.
-- Cache in-memory, ein Eintrag pro Datei (abspath → (mtime_ns, html)), wird bei Änderung überschrieben. 500-Handler loggt Traceback.
+- Cache in-memory, ein Eintrag pro Datei **und TOC-Zustand** (`(abspath, toc)` → (mtime_ns, html)), wird bei Änderung überschrieben. 500-Handler loggt Traceback.
 - Sicherheit: alle Antworten mit `Content-Security-Policy` (`script-src 'self'`) + `nosniff`; Watch-Skript kommt extern über `GET /watch.js` (Pfad per `data-path`). Frontmatter, Diagramm-Fehlerausgaben und Index-Dateinamen werden HTML-maskiert. Rohes HTML im Markdown bleibt erlaubt, Skripte darin blockiert die CSP.
 - Ausgeliefert werden nur Markdown und Bilder (png/jpg/jpeg/gif/svg/webp); `/raw/` nur für Markdown. Pfade mit Dot-Segment (`.git`, `.venv`, `.env`) → 404, Index überspringt sie.
 - Bei Loopback-Bindung nur `Host: localhost|127.0.0.1|[::1]:<port>` (DNS-Rebinding) → sonst 403; `POST` mit fremdem `Origin` → 403 (CSRF). 500 ohne Details an den Client.
 - PlantUML rendert im Server mit `-DPLANTUML_SECURITY_PROFILE=SANDBOX` (`markdown_to_html(..., sandbox=True)`), kein `!include` lokaler Dateien.
 
 ## Render-Kern (`md_render.py`)
+- **Inhaltsverzeichnis:** `markdown_to_html(..., toc=True)` hängt links ein sticky `<nav class="md-toc">` mit den Überschriften h1–h3 an; Anker sind reine `#id`-Sprünge (kein JS nötig). Das Template hat immer den Wrapper `.md-page > (.md-toc? + .md-content > .markdown-body)`; `data-toc-has` meldet dem Server, ob Einträge existieren. Ein `[TOC]`-Marker im Text unterdrückt die Sidebar (die Extension ersetzt ihn bereits inline). Achtung: `md.toc` ist auch ohne Überschriften nicht leer (leeres `<ul>`), deshalb entscheidet `bool(md.toc_tokens)`. `toc_depth='1-3'` begrenzt Verzeichnis **und** Heading-`id`s auf h1–h3.
 - SVG-Cache (max. 256, Schlüssel art/sandbox/code, thread-safe) – Theme-Wechsel, F5, Bearbeiten→Anzeigen rendern Diagramme nicht neu.
 - PlantUML: alle Blöcke eines Dokuments in **einem** JVM-Aufruf (`-charset UTF-8`); Mermaid: bis zu 4 `mmdc` parallel.
 - Auto-Download von `plantuml.jar` höchstens einmal pro Prozess; `find_java`/`find_mmdc` merken Treffer.
@@ -41,6 +42,7 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 
 ## Desktop-App
 - JavaScript in der Vorschau aus (fremde `.md` können keine lokalen Dateien lesen/ausleiten).
+- Inhaltsverzeichnis-Sidebar: checkbare Toolbar-Action „Verzeichnis“ (`Strg+T`), Zustand in `appearance/showToc` (`type=bool`). Umschalten speichert und rendert neu (`_reload_current`), der Zustand steckt im HTML. Default an; Help-Seite ohne Sidebar.
 - Zoom über `setZoomFactor` ohne Neurendern. `zoom_level` wird deshalb in `_render_md_content` **nicht** an `markdown_to_html` durchgereicht – sonst brennt die CSS-Schriftgröße den Zoom zusätzlich hinein und die Vorschau skaliert doppelt.
 - Logging: `sys.stdout/.stderr.reconfigure(line_buffering=True)` in `main()` – sonst leere Redirect-Logs.
 - Banner zeigt: Wurzel, bei `--file` `Datei: X (direkte Anzeige)`, Theme, Zoom, Watch.
@@ -55,7 +57,7 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 
 ### Einstellungen (`QSettings`)
 - `md-dis.ini` (IniFormat) im Verzeichnis aus `app_dir()` – bewusst neben der .exe, damit `preview/`, `plantuml.jar` und die Einstellungen zusammen wandern.
-- Gespeichert: `appearance/darkMode`, `appearance/zoomLevel`, `pdf/pageSize`, `pdf/landscape`, `pdf/marginPreset`.
+- Gespeichert: `appearance/darkMode`, `appearance/zoomLevel`, `appearance/showToc`, `pdf/pageSize`, `pdf/landscape`, `pdf/marginPreset`.
 - Lesen **immer** mit `type=bool` / `type=float`. Bei einer von Hand editierten INI kommt der Wert als String zurück, und `bool("false")` ist `True`. Beim app-eigenen Roundtrip liefert QSettings dagegen einen echten `bool`.
 - `sync()` mit `AccessError` → `_settings_persist = False`, die App läuft dann nur noch im Speicher weiter (schreibgeschützter Installationsordner).
 - `_clamp_zoom` begrenzt geladene Werte auf 0,5–3,0, damit eine handgeschriebene INI die Ansicht nicht unbedienbar macht.
@@ -63,9 +65,10 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 
 ## Work State (verifiziert)
 - `md_render.py` existiert und ist durch `py_compile` + Rendering-Scratch-Tests (Markdown/Dark/Zoom/Frontmatter) bestätigt; `md_dis.py` baut auf dem Kern auf.
+- **Inhaltsverzeichnis verifiziert am 2026-10-12:** 23 Kern-Checks (`%TEMP%\opencode\verify_toc.py`), 22 Server-Routen-Checks (`verify_toc_server.py`: Sidebar, `--no-toc`, `?toc=0/1`, Cache pro Zustand, `/raw`/Traversal/`/poll` unverändert) und 11 GUI-Checks (`verify_toc_gui.py`: Action, `Strg+T`, INI-Persistenz inkl. handgeschriebenem String-`"false"`). `toc_depth=1-3` → h4 ohne `id`, Duplikate `_1`, Anker-`href` == Heading-`id`; `[TOC]`-Marker unterdrückt die Sidebar; Print-CSS blendet `.md-toc` aus; das Gate läuft über `md.toc_tokens` (weil `md.toc` auch ohne Überschriften nicht leer ist).
 - **Source-Mode verifiziert am 2026-09-29** nach der Lizenz- und JAR-Änderung: `py_compile` aller Module, Render-Probe (Frontmatter/Tabellen/Mermaid-SVG) und kompletter Server-Routen-Durchlauf (Index, Doc, raw, poll, watch.js, Upload-Pfad, Traversal-404, Fremd-Host-403).
-- **GUI-Frozen** `dist/md-dis/` (414 MB + 28,5 MB `plantuml.jar`): **Version 1.2.1, gebaut 2026-09-29** – enthält MIT-Lizenz, JAR-Fix, PDF-Export, Einstellungen und den `baseUrl`-Fix. **Veraltet gegenüber der Quelle 1.3.0**: `![[…]]` und der `strip_frontmatter`-Fix fehlen. `warn-md-dis.txt` meldet 0 fehlende PyQt6-Module.
-- **Server-Frozen** `dist/md-dis-server/` (55 MB): **Version 1.1.0 vom 2026-09-26**, also drei Versionen hinter der Quelle. Rebuild über `python build.py --server` ergibt 1.3.2, GUI-Rebuild ergibt 1.3.1.
+- **GUI-Frozen** `dist/md-dis/` (414 MB + 28,5 MB `plantuml.jar`): **Version 1.4.1, gebaut 2026-10-12** – enthält MIT-Lizenz, JAR-Fix, PDF-Export, Einstellungen, den `baseUrl`-Fix, `![[…]]`, den `strip_frontmatter`-Fix und die Inhaltsverzeichnis-Sidebar. `warn-md-dis.txt` meldet nur optionale/conditional fehlende Module (numpy-Init, olefile, ctags, chardet …).
+- **Server-Frozen** `dist/md-dis-server/` (55 MB): **Version 1.4.2, gebaut 2026-10-12**, deckungsgleich mit der Quelle. Smoke-Test am 2026-10-12 direkt aus der Exe (9/9 grün, `%TEMP%\opencode\verify_toc_frozen_server.py`): Start, `/test.md` mit Sidebar + „Verzeichnis ausblenden“, `?toc=0/1`, `/raw`.
 - **Bildeinbettung `![[…]]` verifiziert am 2026-09-29:** `EmbedImageProcessor` in `md_render.py`, Priorität 175, nur `.png/.jpg/.jpeg/.gif/.svg/.webp`. 47 Checks in `%TEMP%\opencode\verify_embed_syntax.py`, echter Chromium-Durchlauf in `%TEMP%\opencode\verify_embed_real.py` (`naturalWidth=60`, `complete=true`, 1 Bild im PDF). Server geprüft: `/doc.md` liefert genau ein `<img alt="" src="pictures/diagramm.png">`, `/pictures/diagramm.png` antwortet 200 `image/png`, Traversal weiter 404.
 - **`strip_frontmatter`-Bug gefunden und behoben (1.3.0):** das Hüllen-Muster war `^```(?:markdown)?\s*\n(.*?)\n```\s*\n?(.*)`. Dadurch traf es **jeden nackten** ```-Fence am Dokumentanfang: der Code wurde als Markdown gerendert, Links und Bilder wurden lebendig, und die Folgezeile klebte an (`code# Titel`). Fix: `markdown` verpflichtend, `[^\S\n]` statt `\s`, `\n*` statt `\n?`, plus `_join_wrapped` für den Trenner zwischen Hüllen-Inhalt und Rest. Betroffen waren nur Fences **ohne** Sprachkennung an Position 0.
 - **PDF-Export im eingefrorenen Build end-to-end geprüft** (2026-09-29, Kopie unter `%TEMP%\opencode\smoke\md-dis`, `plantuml.jar` danebenlegen): `Strg+P` öffnet „PDF-Optionen", Enter öffnet „Als PDF speichern", Pfad + Enter erzeugt eine gültige PDF. A4 hoch → 595×841 pt, 3 Seiten, 74.325 Bytes, 1 Bild, nur Print-Farben. Danach `md-dis.ini` mit `pageSize=A4/landscape=false/marginPreset=Normal`.
@@ -109,11 +112,9 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 **MIT** ist verbindlich (so auch in `LICENSE` und auf GitHub erkannt). Kein GPL-2-Code mehr im Baum – der frühere 344-Zeilen-GPL-2-Block in `md_dis.py` wurde durch den MIT-Text ersetzt. Bei einer Lizenzänderung sind `LICENSE`, `md_dis.py` (`MIT_TEXT`, About-Dialog, Hilfemenü) und `README.md` gemeinsam anzupassen.
 
 ## Nächste Schritte (Vorschläge)
-1. **GUI-Build auf 1.3.1 nachziehen** – der eingefrorene Build kennt `![[…]]` und den `strip_frontmatter`-Fix noch nicht.
-2. **Server-Build auf 1.3.2 nachziehen** – drei Versionen hinter der Quelle.
-3. Optional: automatisierten Regressionstest als Skript (Start-Server → curl-Checks → Upload → Watch) ins Repo legen.
-4. Optional: `--auth`-/Token-Schutz für Upload/Serverzugriff, wenn der Server über LAN exponiert wird – bisher nur localhost-Bindung getestet (im Banner steht die URL).
-5. Optional: GUI-Client „Datei an Server senden“ (wurde von Nutzer nicht gewählt; Browser-Upload stattdessen).
+1. Optional: automatisierten Regressionstest als Skript (Start-Server → curl-Checks → Upload → Watch) ins Repo legen.
+2. Optional: `--auth`-/Token-Schutz für Upload/Serverzugriff, wenn der Server über LAN exponiert wird – bisher nur localhost-Bindung getestet (im Banner steht die URL).
+3. Optional: GUI-Client „Datei an Server senden“ (wurde von Nutzer nicht gewählt; Browser-Upload stattdessen).
 6. Optional: Icon/Logo prüfen, deutsche README.
 
 ## Suggested Skills
