@@ -22,7 +22,7 @@ from pathlib import Path
 import markdown
 from markdown.inlinepatterns import InlineProcessor
 
-VERSION = "1.4.2"
+VERSION = "1.4.4"
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -834,21 +834,81 @@ def strip_frontmatter(md_text: str) -> tuple[str, str]:
     return "", md_text
 
 
+# Indikator fuer YAML-Block-Scalare: "key: >", "key: |", "key: >-", "key: |2", ...
+# (ggf. mit Chomping- und Einrueckungs-Indikator sowie Kommentar)
+_FM_BLOCK_RE = re.compile(r'^([>|])(?:[+-]?\d*|\d*[+-]?)?\s*(?:#.*)?$')
+
+
+def _parse_frontmatter_pairs(frontmatter: str) -> list[tuple[str, str]]:
+    """Einfache YAML-Auswertung der Frontmatter fuer die Info-Box.
+
+    Versteht gewoehnliche Skalare (ggf. mehrzeilig gefaltet), Block-Skalare mit
+    folded/literal-Style ("key: >" bzw. "key: |", inkl. Chomping- und
+    Einrueckungs-Indikator) sowie Listen unter einem Key. Kein vollstaendiger
+    YAML-Parser - nur das, was in Frontmatter-Bloecken real vorkommt.
+    """
+    pairs: list[tuple[str, str]] = []
+    lines = frontmatter.split('\n')
+    i, n = 0, len(lines)
+    while i < n:
+        raw = lines[i]
+        i += 1
+        if not raw.strip() or raw.lstrip().startswith('#'):
+            continue
+        if raw[0].isspace():
+            # Einrueckzeile ohne vorausgegangenen Key - ignorieren
+            continue
+        key, sep, rest = raw.partition(':')
+        if not sep or not key.strip():
+            continue
+        key = key.strip()
+        rest = rest.strip()
+
+        block = _FM_BLOCK_RE.match(rest)
+        if block:
+            # Block-Scalar: alle folgenden eingerueckten (bzw. leeren) Zeilen
+            # gehoeren zum Wert. folded (">") fuegt die Zeilen mit Leerzeichen
+            # zusammen, literal ("|") behaelt die Zeilenumbrueche.
+            style = block.group(1)
+            collected: list[str] = []
+            while i < n and (not lines[i].strip() or lines[i][0].isspace()):
+                collected.append(lines[i].strip())
+                i += 1
+            if style == '>':
+                value = ' '.join(c for c in collected if c)
+            else:
+                value = '\n'.join(collected).strip('\n')
+        elif not rest and i < n and lines[i][:1].isspace() \
+                and lines[i].lstrip().startswith('-'):
+            # Liste unter dem Key: "- a", "- b" -> "a, b"
+            items = []
+            while i < n and lines[i][:1].isspace() \
+                    and lines[i].lstrip().startswith('-'):
+                items.append(lines[i].lstrip()[1:].strip())
+                i += 1
+            value = ', '.join(items)
+        else:
+            # Gewoehnlicher Skalar, ggf. mit eingerueckten Fortsetzungszeilen
+            value = rest
+            while i < n and lines[i].strip() and lines[i][:1].isspace():
+                value += ' ' + lines[i].strip()
+                i += 1
+            value = value.strip().strip('"').strip("'")
+
+        if key and value:
+            pairs.append((key, value))
+    return pairs
+
+
 def render_frontmatter_html(frontmatter: str, dark_mode: bool = False) -> str:
     """Render YAML frontmatter as a styled info box."""
     if not frontmatter:
         return ""
 
-    lines = frontmatter.split('\n')
     rows = []
-    for line in lines:
-        line = line.strip()
-        if ':' in line:
-            key, _, value = line.partition(':')
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if key and value:
-                rows.append(f'<tr><td class="fm-key">{html.escape(key)}</td><td class="fm-value">{html.escape(value)}</td></tr>')
+    for key, value in _parse_frontmatter_pairs(frontmatter):
+        value_html = html.escape(value).replace('\n', '<br>')
+        rows.append(f'<tr><td class="fm-key">{html.escape(key)}</td><td class="fm-value">{value_html}</td></tr>')
 
     if not rows:
         return ""

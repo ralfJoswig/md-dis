@@ -61,6 +61,13 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
   greift, und `\n*` statt `\n?`, damit die Folgezeile nicht angeklebt wird.
 - `_join_wrapped` setzt Inhalt und Folge mit einem Trenner zusammen; vorher ergab
   `# T` + `# Nachfolger` das Wort `# T# Nachfolger`.
+- Die Info-Box rendert `render_frontmatter_html`, die Auswertung übernimmt
+  `_parse_frontmatter_pairs`. Das ist **kein** YAML-Parser, versteht aber die in
+  Frontmatter üblichen Formen: `key: wert`, mehrzeilige Plain-Skalare, Listen
+  unter einem Key (`- a`) und Block-Skalare (`key: >` folded bzw. `key: |` literal,
+  inklusive Chomping- und Einrückungs-Indikator). Vor 1.4.3 wurde die Frontmatter
+  zeilenweise geparst: bei `description: >` landete nur der Indikator `>` in der
+  Zelle, die eingerückten Fortsetzungszeilen fielen weg (und damit der ganze Text).
 
 ### Darstellung
 - Scrollbar

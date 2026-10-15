@@ -7,14 +7,14 @@ A Markdown viewer for Windows with diagram support, available in **two variants*
 | File | `md_dis.py` (PyQt6 GUI) | `md_dis_server.py` (headless) |
 | Interaction | Local window | Browser (index, raw, live view, upload) |
 | Use case | Interactive viewing / editing workflow | Remote reading, sharing, CI, Watch |
-| Current build | `dist/md-dis/` — 1.4.1 | `dist/md-dis-server/` — 1.4.2 |
+| Current build | `dist/md-dis/` — 1.4.3 | `dist/md-dis-server/` — 1.4.4 |
 
 Both share a single **Qt-free render core** (`md_render.py`) — same output in GUI and server.
 
-**Status 2026-10-12:** the source is at **1.4.2** (1.4 series with the table-of-contents
-sidebar). Both frozen builds are current again: `dist/md-dis/` (1.4.1) and
-`dist/md-dis-server/` (1.4.2) include the `![[…]]` embed, the `strip_frontmatter`
-fix and the TOC feature.
+**Status 2026-10-15:** the source is at **1.4.4** (1.4 series with the table-of-contents
+sidebar and the frontmatter block-scalar fix). Both frozen builds are current again:
+`dist/md-dis/` (1.4.3) and `dist/md-dis-server/` (1.4.4) include the `![[…]]` embed,
+the `strip_frontmatter` fix, the TOC feature and the frontmatter fix.
 
 ---
 
@@ -145,7 +145,7 @@ Note: the frozen executables must be run from a **local** Windows path
 
 ```python
 # md_render.py
-VERSION = "1.4.2"
+VERSION = "1.4.4"
 ```
 
 Both variants import `VERSION` from the render core, so a frozen executable
@@ -187,13 +187,14 @@ dist/md-dis-server/md-dis-server.exe --port 8080
 ```
 
 The source version moves ahead of the frozen builds, so a binary reports the
-version it was frozen with, not the current one. `dist/md-dis/` prints 1.4.1 and
-`dist/md-dis-server/` 1.4.2 while the source is at 1.4.2.
+version it was frozen with, not the current one. `dist/md-dis/` prints 1.4.3 and
+`dist/md-dis-server/` 1.4.4 while the source is at 1.4.4.
 
 ### Changelog
 
 | Version | Date | Changes |
 |---|---|---|
+| **1.4.3** | 2026-10-15 | Fixed the frontmatter info box: YAML block scalars (`key: >` folded, `key: \|` literal, incl. chomping/indentation indicators) are now resolved to their full text instead of showing only the `>`/`\|` indicator. Multi-line plain scalars and lists under a key are rendered as well. |
 | **1.4.0** | 2026-10-12 | Auto table of contents: a sticky sidebar built from the headings h1–h3, clickable without JavaScript. Toggle in the desktop app (`Ctrl+T`, persisted in `md-dis.ini`) and in the server (`--no-toc`, plus a `?toc=0/1` link in the toolbar). Off screen it is hidden in the PDF export. |
 | **1.3.0** | 2026-09-29 | Image embed `![[grafik.png]]` with optional `\|Alt-Text`, for `.png/.jpg/.jpeg/.gif/.svg/.webp`, in desktop app and server. Fixed `strip_frontmatter`, which unwrapped *any* document starting with a bare ` ``` ` fence and glued the following line onto the code (`code# Titel`). |
 | **1.2.1** | 2026-09-29 | PDF export (`Ctrl+P`) with page format, orientation and margin presets, always light regardless of theme. Theme, zoom and PDF options persist in `md-dis.ini` next to the executable. Fixed relative image paths and `src="…"`. Dead `_render_markdown` removed. |
