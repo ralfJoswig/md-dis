@@ -14,7 +14,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import unicodedata
 import urllib.request
 import xml.etree.ElementTree as etree
 from collections import OrderedDict
@@ -23,6 +22,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import markdown
+from markdown.extensions.toc import slugify as _toc_slugify
 from markdown.inlinepatterns import InlineProcessor
 
 VERSION = "1.4.4"
@@ -1027,16 +1027,14 @@ class EmbedImageProcessor(InlineProcessor):
 
 
 def _slugify(text: str) -> str:
-    """Einfaches Slugify für Anker (kompatibel zu Python-Markdown)."""
-    text = unicodedata.normalize('NFKD', text)
-    text = text.lower()
-    # Ersetze Leerzeichen und Unterstriche durch Bindestriche
-    text = re.sub(r'[\s_]+', '-', text)
-    # Entferne nicht alphanumerische Zeichen außer Bindestrich
-    text = re.sub(r'[^a-z0-9\-]+', '', text)
-    # Mehrere Bindestriche zusammenfassen
-    text = re.sub(r'-+', '-', text)
-    return text.strip('-')
+    """Anker wie die toc-Extension bilden.
+
+    Nutzt bewusst denselben Slugify mit demselben Trenner wie die Extension,
+    die die Heading-ids vergibt. Eine eigene Implementierung wich bei
+    Unterstrichen ab ("a_b c" -> "a-b-c" statt "a_b-c"), wodurch
+    [[Datei#Abschnitt]]-Links das Ziel verfehlten.
+    """
+    return _toc_slugify(text, '-')
 
 
 WIKILINK_PATTERN = r'(?<!\!)\[\[([^\]\|#]+?)(?:#([^\]\|]+))?(?:\|([^\]]+))?\]\]'
@@ -1084,6 +1082,77 @@ class WikiLinkProcessor(InlineProcessor):
         return el, m.start(0), m.end(0)
 
 
+# Fence-Zeile nach CommonMark: bis zu 3 Leerzeichen Einrueckung, dann ``` bzw.
+# ~~~ (mindestens 3), dann der Info-String. Bei Backtick-Fences darf der
+# Info-String keine Backticks enthalten.
+_FENCE_RE = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')
+
+
+def _fence_info(line: str) -> tuple[str, int, str] | None:
+    """Zerlegt eine Fence-Zeile in (Zeichen, Laenge, Info-String) oder None."""
+    m = _FENCE_RE.match(line)
+    if not m:
+        return None
+    fence, info = m.group(1), m.group(2)
+    if fence[0] == '`' and '`' in info:
+        return None
+    return fence[0], len(fence), info.strip()
+
+
+def _extract_diagram_blocks(md_text: str) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Zieht PlantUML-/Mermaid-Fences aus dem Text und ersetzt sie durch Keys.
+
+    Arbeitet zeilen- und zustandsbasiert ueber Fences. Ein ```plantuml-Beispiel
+    *innerhalb* eines anderen Code-Blocks wird dadurch nicht als Diagramm
+    ausgefuehrt - der fruehere ``re.sub``-Vorabpass tat genau das, weil er den
+    ganzen Text ohne Fence-Kontext durchsuchte. Liefert
+    ``(neuer_text, plantuml_blocks, mermaid_blocks)``; die Keys sind ueber beide
+    Maps eindeutig.
+    """
+    lines = md_text.split('\n')
+    plantuml_blocks: dict[str, str] = {}
+    mermaid_blocks: dict[str, str] = {}
+    out: list[str] = []
+    counter = 0
+    i, n = 0, len(lines)
+    while i < n:
+        opening = _fence_info(lines[i])
+        if opening is None:
+            out.append(lines[i])
+            i += 1
+            continue
+        char, length, info = opening
+        # Ende des Blocks suchen: gleiches Zeichen, mindestens so lang, ohne Info.
+        j = i + 1
+        closed = False
+        while j < n:
+            closing = _fence_info(lines[j])
+            if closing and closing[0] == char and closing[1] >= length and closing[2] == "":
+                closed = True
+                break
+            j += 1
+        lang = info.split()[0].lower() if info else ""
+        if closed and lang in ("plantuml", "mermaid"):
+            code = "\n".join(lines[i + 1:j])
+            if lang == "plantuml":
+                key = f"__PLANTUML_{counter}__"
+                plantuml_blocks[key] = code
+            else:
+                key = f"__MERMAID_{counter}__"
+                mermaid_blocks[key] = code
+            counter += 1
+            out.append(f"```text\n{key}\n```")
+            i = j + 1
+        elif closed:
+            out.extend(lines[i:j + 1])
+            i = j + 1
+        else:
+            # Unabgeschlossener Fence: bis zum Dokumentende unveraendert lassen.
+            out.extend(lines[i:])
+            i = n
+    return "\n".join(out), plantuml_blocks, mermaid_blocks
+
+
 def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 1.0, progress_callback=None,
                      sandbox: bool = False, toc: bool = False, base_path: Path | str | None = None) -> str:
     """Convert markdown text to full HTML page.
@@ -1101,26 +1170,11 @@ def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 
     # Verzeichnisse im Dokument).
     has_toc_marker = "[TOC]" in md_text
 
-    # Extract PlantUML blocks BEFORE markdown conversion
-    # (otherwise pygments/codehilite overwrites the language class)
-    plantuml_blocks = {}
-    mermaid_blocks = {}
-    counter = [0]
-
-    def save_plantuml(match):
-        key = f"__PLANTUML_{counter[0]}__"
-        counter[0] += 1
-        plantuml_blocks[key] = match.group(1)
-        return f"```text\n{key}\n```"
-
-    def save_mermaid(match):
-        key = f"__MERMAID_{counter[0]}__"
-        counter[0] += 1
-        mermaid_blocks[key] = match.group(1)
-        return f"```text\n{key}\n```"
-
-    md_text = re.sub(r'```plantuml\s*\n(.*?)\n```', save_plantuml, md_text, flags=re.DOTALL)
-    md_text = re.sub(r'```mermaid\s*\n(.*?)\n```', save_mermaid, md_text, flags=re.DOTALL)
+    # Extract PlantUML/Mermaid blocks BEFORE markdown conversion
+    # (otherwise pygments/codehilite overwrites the language class). Der Parser
+    # respektiert Code-Fences, damit Beispiel-Snippets in anderen Code-Bloecken
+    # unberuehrt bleiben.
+    md_text, plantuml_blocks, mermaid_blocks = _extract_diagram_blocks(md_text)
 
     extensions = [
         'markdown.extensions.fenced_code',

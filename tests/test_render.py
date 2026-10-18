@@ -7,9 +7,8 @@ benannt wurden: Frontmatter (inklusive der 1.3.0-Regression), Block-Skalare
 
 import re
 
-import pytest
-
 from md_render import (
+    _extract_diagram_blocks,
     _parse_frontmatter_pairs,
     markdown_to_html,
     strip_frontmatter,
@@ -107,12 +106,57 @@ class TestWikiLinksAndEmbeds:
         assert "![[x.png]]" in html
 
 
-@pytest.mark.xfail(
-    reason="Bekanntes Problem (Review M3): _slugify erzeugt 'a-b-c', die "
-    "toc-Extension vergibt aber 'a_b-c'. Der Wiki-Link-Anker trifft dann nicht.",
-    strict=False,
-)
+class TestExtractDiagramBlocks:
+    def test_plantuml_block_is_extracted(self):
+        text, puml, mermaid = _extract_diagram_blocks("```plantuml\nA -> B\n```\n")
+        assert puml == {"__PLANTUML_0__": "A -> B"}
+        assert mermaid == {}
+        assert "__PLANTUML_0__" in text
+        assert "A -> B" not in text
+
+    def test_mermaid_block_is_extracted(self):
+        _text, puml, mermaid = _extract_diagram_blocks("```mermaid\ngraph TD;\n```\n")
+        assert puml == {}
+        assert mermaid == {"__MERMAID_0__": "graph TD;"}
+
+    def test_example_inside_another_fence_is_not_extracted(self):
+        # Regression Review M1: ```plantuml innerhalb eines ````-Blocks ist
+        # Beispiel-Doku und darf NICHT als Diagramm extrahiert werden.
+        text = "````text\n```plantuml\nA -> B\n```\n````\n"
+        new_text, puml, mermaid = _extract_diagram_blocks(text)
+        assert puml == {}
+        assert mermaid == {}
+        assert new_text == text
+
+    def test_other_language_fence_is_kept_verbatim(self):
+        text = "```python\nprint('x')\n```\n"
+        new_text, puml, mermaid = _extract_diagram_blocks(text)
+        assert puml == {} and mermaid == {}
+        assert new_text == text
+
+    def test_unterminated_fence_is_not_extracted(self):
+        text = "```plantuml\nA -> B\n"
+        new_text, puml, mermaid = _extract_diagram_blocks(text)
+        assert puml == {}
+        assert new_text == text
+
+    def test_plantuml_and_mermaid_get_distinct_keys(self):
+        text = "```plantuml\nA\n```\n```mermaid\nB\n```\n"
+        _, puml, mermaid = _extract_diagram_blocks(text)
+        assert set(puml) == {"__PLANTUML_0__"}
+        assert set(mermaid) == {"__MERMAID_1__"}
+
+    def test_diagram_inside_other_fence_not_rendered(self):
+        # End-to-End: das Beispiel im Codeblock darf keinen Renderer anwerfen.
+        html = markdown_to_html("````text\n```plantuml\nA -> B\n```\n````\n")
+        assert "A -&gt; B" in html or "A -> B" in html
+        assert "plantuml-error" not in html
+
+
 def test_wikilink_anchor_matches_heading_id():
+    # Regression Review M3: Der Wiki-Link-Anker muss exakt die id treffen, die
+    # die toc-Extension der Ueberschrift gibt - auch bei Unterstrichen
+    # ("a_b c" -> "a_b-c", nicht "a-b-c").
     html = markdown_to_html("# a_b c\n\n[[doc.md#a_b c]]\n")
     heading_id = re.search(r'<h1 id="([^"]+)"', html).group(1)
     anchor = re.search(r'href="doc\.md#([^"]+)"', html).group(1)

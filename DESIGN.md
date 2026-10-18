@@ -30,9 +30,11 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
 - Als `InlineProcessor` in `md_render.py` (`EmbedImageProcessor`), registriert mit
   Priorität **175** auf der `markdown.Markdown`-Instanz in `markdown_to_html`.
 - **Warum Inline-Prozessor und kein Regex-Vorabpass:** Ein Vorabpass auf dem
-  Markdown-Text greift auch in Code-Fences und Inline-Code — genau das Problem,
-  das der PlantUML-/Mermaid-Vorabpass bei `md_render.py:802` hat. Inline-Prozessoren
-  laufen nur in Fließtext, in `<pre>`/`<code>` bleibt die Syntax sichtbarer Text.
+  Markdown-Text griff früher auch in Code-Fences und Inline-Code. Der
+  PlantUML-/Mermaid-Vorabpass ist inzwischen auf zustandsbasiertes
+  Fence-Parsing umgestellt (`_extract_diagram_blocks`, siehe unten); für
+  text-level-Syntax wie `![[…]]` bleibt ein Inline-Prozessor trotzdem das
+  einfachere Mittel, weil in `<pre>`/`<code>` die Syntax sichtbarer Text bleibt.
 - Priorität 175 liegt **vor** dem eingebauten Bildmuster (160), `![…](…)` bleibt
   unverändert.
 - Erzeugt `etree.Element("img")` statt HTML-String, dadurch sind Attributwerte
@@ -53,6 +55,12 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
 - `[[Datei]]` ergänzt bei fehlender Dateiendung `.md`; `[[Datei#Abschnitt]]`
   hängt den über `_slugify` erzeugten Anker an; `[[Datei|Alias]]` setzt den
   Linktext (Default: Dateiname ohne Endung).
+- `_slugify` verwendet **denselben** Slugify wie die toc-Extension
+  (`markdown.extensions.toc.slugify`, Trenner `-`). Eine frühere eigene
+  Implementierung erzeugte bei Unterstrichen `a-b-c` statt `a_b-c` und
+  verfehlte damit die Heading-`id` (Review M3). Doppelt vorkommende
+  Überschriftentexte bleiben eine Einschränkung: die Extension nummeriert sie
+  (`_1`), `_slugify` kennt nur die Basis.
 - Wie das Bild-Embed ein `InlineProcessor` – in Code-Fences und Inline-Code
   bleibt die Syntax sichtbarer Text.
 - Liefert ein `etree.Element("a")`, dadurch werden `href` und Linktext escaped.
@@ -64,6 +72,12 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
   - Der Download ist atomar (`plantuml.jar.part` + `os.replace`); liefert die
     Release-Seite eine `plantuml.jar.sha256`, wird der Download zusätzlich gegen
     deren Prüfsumme verifiziert (sonst läuft er unverändert weiter).
+- **Extraktion fence-aware:** `_extract_diagram_blocks` geht die Zeilen
+  zustandsbasiert durch und erkennt ` ```plantuml `/` ```mermaid ` nur auf
+  oberster Ebene (gleiches Fence-Zeichen, Schließ-Fence mindestens so lang,
+  ohne Info-String). Ein ` ```plantuml `-Beispiel *innerhalb* eines anderen
+  Code-Blocks wird dadurch nicht als Diagramm ausgeführt – der frühere
+  `re.sub`-Vorabpass über den ganzen Text tat das (Review M1).
 
 ### Frontmatter
 - `strip_frontmatter` in `md_render.py` erkennt YAML-Frontmatter am Dateianfang und

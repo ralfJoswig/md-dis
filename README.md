@@ -55,17 +55,14 @@ pip install -r requirements.txt
 ## Tests
 
 The committed regression tests cover the pure parts of the render core
-(frontmatter, block scalars, wiki links, image embeds, anchors) and the server
-helpers (path traversal guard, filename sanitising). They need `pytest`:
+(frontmatter, block scalars, wiki links, image embeds, diagram extraction,
+anchors) and the server helpers (path traversal guard, filename sanitising).
+They need `pytest`:
 
 ```bash
 pip install pytest
 python -m pytest
 ```
-
-One test is marked `xfail`: it documents a known mismatch between the wiki-link
-anchor and the heading `id` for headings containing underscores (see
-"Bekannte Probleme" in `HANDOFF.md`). It starts passing once that is fixed.
 
 ## Usage
 
