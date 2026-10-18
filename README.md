@@ -56,7 +56,9 @@ pip install -r requirements.txt
 
 The committed regression tests cover the pure parts of the render core
 (frontmatter, block scalars, wiki links, image embeds, diagram extraction,
-anchors) and the server helpers (path traversal guard, filename sanitising).
+anchors), the server helpers (path traversal guard, filename sanitising) and a
+real `MDDisServer` over HTTP (index, doc route, CSP, foreign-host `403`,
+oversized `413`, BOM and invalid UTF-8).
 They need `pytest`:
 
 ```bash
