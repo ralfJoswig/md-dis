@@ -11,16 +11,16 @@ from md_render import (
 )
 
 from PyQt6.QtCore import (
-    Qt, QUrl, QTemporaryFile, QIODevice, QEvent, QTimer, QSettings,
+    Qt, QUrl, QEvent, QEventLoop, QTimer, QSettings,
     QMarginsF,
 )
 from PyQt6.QtGui import (
-    QAction, QKeySequence, QIcon, QShortcut, QDragEnterEvent, QDropEvent,
+    QAction, QKeySequence, QIcon, QShortcut,
     QDesktopServices, QFont, QPageLayout, QPageSize,
 )
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QToolBar, QDialog,
-    QLabel, QStatusBar, QMessageBox, QProgressBar, QDialogButtonBox,
+    QLabel, QMessageBox, QProgressBar, QDialogButtonBox,
     QLineEdit, QWidget, QHBoxLayout, QVBoxLayout, QPlainTextEdit, QStackedWidget,
     QMenu, QToolButton, QComboBox, QRadioButton, QButtonGroup, QFormLayout
 )
@@ -29,6 +29,18 @@ from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage
 
 
 MERMAID_JS_URL = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"
+
+
+def _process_events():
+    """Verarbeitet Qt-Events, aber keine Nutzereingaben.
+
+    ``QApplication.processEvents()`` ohne Flag wuerde waehrend eines langen
+    Renderns (PlantUML/Mermaid) oder Downloads auch Maus- und Tastatureingaben
+    zustellen. Klickt der Nutzer dann z. B. "Datei oeffnen", laeuft
+    ``_load_file`` verschachtelt in ``_render_md_content`` und die alte
+    Anzeige ueberschreibt die neue (Review M8).
+    """
+    QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
 HELP_MARKDOWN = """
 # md-dis – Hilfe
@@ -753,7 +765,7 @@ class MarkdownViewer(QMainWindow):
 
         if reply == QMessageBox.StandardButton.Yes:
             self.statusBar().showMessage("Lade plantuml.jar herunter...")
-            QApplication.processEvents()
+            _process_events()
 
             def _progress(msg):
                 self.statusBar().showMessage(msg)
@@ -792,7 +804,7 @@ class MarkdownViewer(QMainWindow):
             return
         try:
             self.statusBar().showMessage(f"Lade: {file_path}")
-            QApplication.processEvents()
+            _process_events()
 
             # utf-8-sig: eine BOM am Dateianfang wird entfernt, sonst bleibt sie
             # als unsichtbares Zeichen stehen und die Frontmatter-Erkennung (^---)
@@ -824,10 +836,10 @@ class MarkdownViewer(QMainWindow):
             self.progress_bar.setValue(current)
             self.progress_bar.setVisible(True)
             self.statusBar().showMessage(msg)
-            QApplication.processEvents()
+            _process_events()
 
         self.statusBar().showMessage("Rendere Markdown...")
-        QApplication.processEvents()
+        _process_events()
 
         # zoom_level wird hier bewusst nicht uebergeben: die Vergroesserung
         # laeuft ausschliesslich ueber setZoomFactor (View-Ebene). Ein
@@ -1028,7 +1040,7 @@ class MarkdownViewer(QMainWindow):
         self._pdf_exporting = True
         self._update_pdf_action()
         self.statusBar().showMessage("Erstelle PDF...")
-        QApplication.processEvents()
+        _process_events()
         # Asynchron: das Ergebnis meldet _on_pdf_finished. printToPdf
         # ignoriert setZoomFactor, das PDF ist also unabhaengig vom Zoom.
         self.web_view.page().printToPdf(file_path, dialog.page_layout())

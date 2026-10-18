@@ -19,7 +19,6 @@ import xml.etree.ElementTree as etree
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from urllib.parse import quote
 
 import markdown
 from markdown.extensions.toc import slugify as _toc_slugify
@@ -790,11 +789,13 @@ def _mermaid(code: str) -> tuple[str, bool]:
     if not mmdc_path:
         return _diagram_error("Mermaid: mmdc nicht gefunden. Bitte installieren: npm install -g @mermaid-js/mermaid-cli", code), False
 
+    input_path = None
+    output_path = None
     try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.mmd', delete=False, encoding='utf-8') as f:
             f.write(code)
             input_path = f.name
-        output_path = input_path.replace('.mmd', '.svg')
+        output_path = str(Path(input_path).with_suffix(".svg"))
 
         cmd = [mmdc_path, "-i", input_path, "-o", output_path, "-b", "transparent"]
         kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
@@ -812,14 +813,10 @@ def _mermaid(code: str) -> tuple[str, bool]:
         if os.path.exists(output_path):
             with open(output_path, 'r', encoding='utf-8') as f:
                 svg_content = f.read()
-            os.unlink(output_path)
-            os.unlink(input_path)
             return svg_content, True
-        else:
-            if os.path.exists(input_path):
-                os.unlink(input_path)
-            error_msg = (result.stderr or result.stdout or b"Unbekannter Fehler").decode("utf-8", errors="replace")
-            return _diagram_error(f"Mermaid-Fehler:<br>{html.escape(error_msg)}", code), False
+
+        error_msg = (result.stderr or result.stdout or b"Unbekannter Fehler").decode("utf-8", errors="replace")
+        return _diagram_error(f"Mermaid-Fehler:<br>{html.escape(error_msg)}", code), False
 
     except subprocess.TimeoutExpired:
         return _diagram_error("Mermaid: Timeout beim Rendern.", code), False
@@ -827,6 +824,15 @@ def _mermaid(code: str) -> tuple[str, bool]:
         return _diagram_error("Mermaid: mmdc nicht gefunden. Bitte installieren: npm install -g @mermaid-js/mermaid-cli", code), False
     except Exception as e:
         return _diagram_error(f"Mermaid-Fehler: {html.escape(str(e))}", code), False
+    finally:
+        # Eingabe- und Ausgabedatei immer aufraeumen, auch bei Timeout/Fehler
+        # (Review N7: die Temp-.mmd blieb bisher liegen).
+        for path in (input_path, output_path):
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
 
 def render_mermaid(code: str) -> str:

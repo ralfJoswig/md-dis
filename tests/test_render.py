@@ -150,6 +150,7 @@ class TestExtractDiagramBlocks:
         # End-to-End: das Beispiel im Codeblock darf keinen Renderer anwerfen.
         html = markdown_to_html("````text\n```plantuml\nA -> B\n```\n````\n")
         assert "A -&gt; B" in html or "A -> B" in html
+        assert "plantuml-error" not in html
 
 
 class TestTocMarker:
@@ -163,7 +164,31 @@ class TestTocMarker:
     def test_marker_inside_code_fence_keeps_sidebar(self):
         html = markdown_to_html("```\n[TOC]\n```\n\n# A\n\n## B\n", toc=True)
         assert '<nav class="md-toc">' in html
-        assert "plantuml-error" not in html
+
+
+def test_mermaid_removes_temp_files_on_error(monkeypatch):
+    # Review N7: Bei Timeout/Fehler blieb die Temp-.mmd liegen.
+    import glob
+    import os
+    import tempfile
+
+    import md_render
+
+    monkeypatch.setattr(md_render, "find_mmdc", lambda: "mmdc-fake")
+
+    def _boom(*args, **kwargs):
+        raise md_render.subprocess.TimeoutExpired("mmdc", 60)
+
+    monkeypatch.setattr(md_render.subprocess, "run", _boom)
+
+    pattern = os.path.join(tempfile.gettempdir(), "*.mmd")
+    before = set(glob.glob(pattern))
+    html_out, ok = md_render._mermaid("graph TD; A-->B")
+    after = set(glob.glob(pattern))
+
+    assert ok is False
+    assert "Timeout" in html_out
+    assert after == before
 
 
 def test_wikilink_anchor_matches_heading_id():
