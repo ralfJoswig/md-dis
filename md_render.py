@@ -873,8 +873,6 @@ def render_frontmatter_html(frontmatter: str, dark_mode: bool = False) -> str:
 
     bg_color = "#161b22" if dark_mode else "#f6f8fa"
     border_color = "#30363d" if dark_mode else "#e1e4e8"
-    text_color = "#c9d1d9" if dark_mode else "#24292e"
-    key_color = "#8b949e" if dark_mode else "#6a737d"
 
     return f'''<div class="frontmatter" style="background:{bg_color}; border:1px solid {border_color}; border-radius:6px; padding:12px 16px; margin-bottom:24px;">
 <table style="border-collapse:collapse; width:100%; font-size:0.9em;">

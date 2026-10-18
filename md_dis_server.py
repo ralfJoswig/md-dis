@@ -232,7 +232,7 @@ class MDDisHandler(BaseHTTPRequestHandler):
             elif url_path.startswith("/raw/"):
                 self._handle_raw(url_path[len("/raw/"):])
             else:
-                self._handle_doc_or_static(url_path, start, query)
+                self._handle_doc_or_static(url_path, query)
         except Exception:  # pragma: no cover – letzter Notnagel
             traceback.print_exc()
             self._last_status = 500
@@ -481,7 +481,7 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
         self._last_status = 200
         self._send_text(200, html, "text/html; charset=utf-8")
 
-    def _handle_doc_or_static(self, url_path: str, start: float, query=None):
+    def _handle_doc_or_static(self, url_path: str, query=None):
         root = CONFIG["root"]
         rel = url_path.lstrip("/")
         target = None if _is_hidden(rel) else resolve_within_root(root, rel)
