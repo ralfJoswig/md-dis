@@ -24,7 +24,7 @@ import markdown
 from markdown.extensions.toc import slugify as _toc_slugify
 from markdown.inlinepatterns import InlineProcessor
 
-VERSION = "1.4.4"
+VERSION = "1.4.6"
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
