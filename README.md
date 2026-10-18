@@ -45,12 +45,27 @@ download and an **LRU server cache**; these are not part of a release build yet,
 - PlantUML diagrams: Java runtime + `plantuml.jar`
 - Mermaid diagrams: `mmdc` from `@mermaid-js/mermaid-cli`
 
-`pymupdf` is **not** a runtime dependency. It is only used to measure generated
-PDFs in the test scripts.
+`pymupdf` is **not** a runtime dependency. It was only used in ad-hoc scripts to
+measure generated PDFs and is not needed for the regression tests in `tests/`.
 
 ```bash
 pip install -r requirements.txt
 ```
+
+## Tests
+
+The committed regression tests cover the pure parts of the render core
+(frontmatter, block scalars, wiki links, image embeds, anchors) and the server
+helpers (path traversal guard, filename sanitising). They need `pytest`:
+
+```bash
+pip install pytest
+python -m pytest
+```
+
+One test is marked `xfail`: it documents a known mismatch between the wiki-link
+anchor and the heading `id` for headings containing underscores (see the
+"Known issues" in `HANDOFF.md`). It starts passing once that is fixed.
 
 ## Usage
 

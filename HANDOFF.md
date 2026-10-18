@@ -85,7 +85,7 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 - **Nicht möglich:** Skalierung im PDF-Export. `printToPdf` hat in PyQt6 nur `(filePath, pageLayout, ranges)`, keinen `scaleFactor`. Ausweg für breite Diagramme: Querformat.
 - `_render_markdown` in `md_dis.py` war toter Code (seit dem Erstcommit `dd1a2c5` nie aufgerufen) und wurde entfernt – er hätte bei Reaktivierung doppelt skaliert. Belegt mit `git log -S`.
 - Source-Mode Tests laufen über `Start-Process python … --port <n>` + `curl.exe` (Achtung: bei `RedirectStandardOutput` werden Konsol-Ausgaben nur bei line-buffering sichtbar).
-- Kein automatisches Test-Framework – Verifikation manuell über Skripte im Smoke-Ordner (`%TEMP%\opencode\verify_*.py`), bewusst **nicht** im Repo.
+- **Automatisierte Regressionstests im Repo:** `tests/` (pytest) deckt den Render-Kern (Frontmatter inkl. 1.3.0-Regression, Block-Skalare inkl. 1.4.3-Regression, Wiki-Links/Embeds, Anker-Kompatibilität) und die Server-Helfer (`resolve_within_root`, `_sanitize_filename`) ab. Lauf: `python -m pytest` (27 passed, 1 xfailed am 2026-10-18). Die früheren Ad-hoc-Skripte (`%TEMP%\opencode\verify_*.py`) bleiben daneben bestehen.
 - **Chromium-Test-Falle (zweite):** `loadFinished` muss **vor** `setHtml` verbunden werden, sonst geht das Signal verloren. `printToPdf` erwartet an 2. Argument ein `QPageLayout` – ein `QPageSize` an dieser Stelle stürzt hart mit `0xC0000409` ab, ebenso ein leerer stdout wegen Pufferung. Deshalb `sys.stdout.reconfigure(line_buffering=True)`.
 
 ## Wichtige Regeln & Fallstricke
@@ -99,6 +99,10 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 8. **Keine Kommentare zu `md_dis.py` anlegen, die den Zoom- oder `baseUrl`-Pfad „korrigieren"**: beides ist Absicht, ein Durchreichen von `zoom_level` skaliert doppelt, ein Wechsel zurück auf `setUrl` zerstört relative Bilder.
 9. **`strip_frontmatter` nicht wieder auf `(?:markdown)?` erweitern:** die optionale Klammer ist genau der Bug aus 1.3.0. Ein ```markdown-Block am Dokumentanfang wird immer entpackt — auch wenn er nur ein *Beispiel* für Code zeigen sollte. Das ist gewollt, aber überraschend; bei Bedarf auf "Hülle umfasst das ganze Dokument" einschränken.
 10. **Frontmatter nicht wieder zeilenweise parsen:** `_parse_frontmatter_pairs` muss die Einrückung auswerten (Block-Skalar `>`/`|`, mehrzeilige Plain-Skalare, Listen). Ein Ansatz „Zeile strippen, bei `:` aufteilen" lässt genau die Fortsetzungszeilen fallen und zeigt nur den `>`-Indikator – das war der Bug aus 1.4.3.
+
+## Bekannte Probleme
+- **Wiki-Link-Anker bei Überschriften mit Unterstrich (Review M3):** `_slugify` erzeugt z. B. `a-b-c`, die toc-Extension vergibt für `# a_b c` aber `a_b-c`. `[[Datei#Abschnitt]]`-Links treffen dann nicht. Der pytest-Test `test_wikilink_anchor_matches_heading_id` ist deshalb `xfail` und wird grün, sobald `_slugify` durch die toc-Slugify ersetzt ist.
+- **Diagramm-Vorabpass greift in Code-Fences (Review M1):** `md_render.py:1122-1123` sucht ` ```plantuml `/` ```mermaid ` per `re.sub` im ganzen Text, also auch innerhalb eines ` ```text `-Blocks. Geplant: zustandsbasiertes Fence-Parsing.
 
 ## Versionsregel
 `VERSION` in `md_render.py` ist die einzige Versionsangabe und hat die Form `MAJOR.MINOR.BUILD`.
@@ -118,7 +122,7 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 **MIT** ist verbindlich (so auch in `LICENSE` und auf GitHub erkannt). Kein GPL-2-Code mehr im Baum – der frühere 344-Zeilen-GPL-2-Block in `md_dis.py` wurde durch den MIT-Text ersetzt. Bei einer Lizenzänderung sind `LICENSE`, `md_dis.py` (`MIT_TEXT`, About-Dialog, Hilfemenü) und `README.md` gemeinsam anzupassen.
 
 ## Nächste Schritte (Vorschläge)
-1. Optional: automatisierten Regressionstest als Skript (Start-Server → curl-Checks → Upload → Watch) ins Repo legen.
+1. Optional: `tests/` erweitern – Server-Routen per `ThreadingHTTPServer` testen, den Fence-Vorabpass (M1) und die Slugify-Kompatibilität (M3) absichern, sobald behoben.
 2. Optional: `--auth`-/Token-Schutz für Upload/Serverzugriff, wenn der Server über LAN exponiert wird – bisher nur localhost-Bindung getestet (im Banner steht die URL).
 3. Optional: GUI-Client „Datei an Server senden“ (wurde von Nutzer nicht gewählt; Browser-Upload stattdessen).
 6. Optional: Icon/Logo prüfen, deutsche README.

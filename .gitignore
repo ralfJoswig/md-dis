@@ -6,6 +6,7 @@ dist/
 # Python
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
 # Laufzeit-Artefakte
 plantuml.jar
