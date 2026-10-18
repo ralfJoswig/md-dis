@@ -39,7 +39,7 @@ download and an **LRU server cache**; these are not part of a release build yet,
 
 ## Requirements
 
-- Python 3.11+ (requirements.txt)
+- Python 3.10+ (requirements.txt; deckt sich mit DESIGN.md)
 - Desktop app: PyQt6 + PyQt6-WebEngine
 - HTTPServer: Python standard library only (no Qt)
 - PlantUML diagrams: Java runtime + `plantuml.jar`

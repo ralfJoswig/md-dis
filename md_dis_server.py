@@ -146,12 +146,23 @@ def _parse_multipart(content_type: str, body: bytes):
     return None
 
 
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+
 def _sanitize_filename(name: str) -> str:
     """Macht einen Dateinamen unbedenklich (nur Basisname, sichere Zeichen)."""
     name = name.replace("\\", "/").replace("/", " ").strip()
     name = re.sub(r'[^\w\-. ]', "_", name, flags=re.UNICODE).strip().lstrip(".")
     if not name:
         name = "upload.md"
+    # Windows wertet CON/PRN/NUL/COM1 ... als Gerät, auch mit Endung ("CON.md"):
+    # ein solcher Name liesse sich nicht als Datei anlegen/oeffnen.
+    if name.split(".")[0].upper() in _WINDOWS_RESERVED_NAMES:
+        name = "_" + name
     return name[:80]
 
 

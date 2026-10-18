@@ -62,3 +62,10 @@ class TestSanitizeFilename:
 
     def test_length_is_capped(self):
         assert len(_sanitize_filename("a" * 200 + ".md")) <= 80
+
+    def test_windows_device_names_are_prefixed(self):
+        # Review N8: "CON.md" & Co. wertet Windows als Gerät.
+        assert _sanitize_filename("CON.md") == "_CON.md"
+        assert _sanitize_filename("nul") == "_nul"
+        assert _sanitize_filename("Com5.md") == "_Com5.md"
+        assert _sanitize_filename("LPT9") == "_LPT9"

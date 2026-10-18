@@ -109,6 +109,9 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 13. **Speichern mit `newline=""`, Lesen mit `utf-8-sig`:** Ohne `newline=""` stellt eine GUI-Speicherung LF auf CRLF um (Review M4); ohne `utf-8-sig` verhindert eine BOM die Frontmatter-Erkennung `^---` (Review N9). Gilt in GUI und Server.
 14. **`[TOC]` erst am konvertierten Inhalt prüfen** (`<div class="toc">` im Ergebnis), nicht per `"[TOC]" in md_text`: Sonst zählt ein Beispiel in einem Code-Block fälschlich als Marker und die Sidebar verschwindet (Review M9). Verzeichnis-URLs liefern `404`, keinen `301` auf sich selbst (Review M7).
 15. **`QApplication.processEvents` nur mit `ExcludeUserInputEvents`** (Helfer `_process_events` in `md_dis.py`): sonst läuft während des Renderns/Downloads ein zweiter Datei-Öffnen-Aufruf verschachtelt und die alte Anzeige gewinnt (Review M8). `_mermaid` räumt Ein-/Ausgabedatei immer per `try/finally` auf (Review N7).
+16. **`_sanitize_filename` gegen Windows-Gerätenamen absichern:** `CON`, `PRN`, `NUL`, `COM1`…`LPT9` bleiben auch mit Endung (`CON.md`) Geräte und lassen sich nicht anlegen; ein führendes `_` löst das (Review N8).
+17. **CSS-Palette nur an einer Stelle (`_CSS_TEMPLATE` + `_CSS_PALETTE_*`) pflegen:** Hell und Dunkel unterschieden sich nur in den Farbwerten (Review N2); `CSS_LIGHT`/`CSS_DARK` entstehen über `_css_with_palette`.
+18. **Python-Version einheitlich nennen:** Der Code nutzt `X | Y`-Annotationen (3.10) und keine 3.11-exklusiven Features, also 3.10+ in README/DESIGN (Review N12).
 
 ## Bekannte Probleme
 - **Doppelte Heading-ids:** Kommt eine Überschrift mehrfach vor, nummeriert die toc-Extension (`titel`, `titel_1`, …). `_slugify` kennt nur die Basis, ein `[[Datei#titel]]`-Anker trifft also den ersten Treffer. Offen; die Anker-Angleichung (Review M3) ist erledigt.
