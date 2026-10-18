@@ -830,9 +830,12 @@ class MarkdownViewer(QMainWindow):
         # laeuft ausschliesslich ueber setZoomFactor (View-Ebene). Ein
         # Durchreichen wuerde die Schriftgroesse zusaetzlich in das CSS
         # einbrennen und damit doppelt skalieren.
+        # sandbox=True: PlantUML darf keine lokalen Dateien/URLs aufloesen
+        # (!include/!includeurl). Der Server rendert aus demselben Grund mit
+        # sandbox=True; eine fremde .md darf in der Vorschau nichts ausleiten.
         html = markdown_to_html(md_text, self.dark_mode,
                                  progress_callback=on_plantuml_progress,
-                                 toc=self.show_toc)
+                                 toc=self.show_toc, sandbox=True)
         self._ensure_web_view()
         if self.web_view is not None:
             if not self.edit_mode:
