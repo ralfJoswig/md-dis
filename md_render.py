@@ -47,13 +47,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
-CSS_LIGHT = """
+# Gemeinsame CSS-Struktur fuer Hell und Dunkel: nur die Farbwerte unterscheiden
+# sich, sie kommen aus den Paletten unten. {font_size} bleibt als Platzhalter
+# stehen (wird in markdown_to_html gesetzt); doppelte {{/}} sind bereits fuer
+# .format() gezogen - hier also keine weitere Formatierung auf den Text legen.
+_CSS_TEMPLATE = """
 body {{
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     font-size: {font_size}px;
     line-height: 1.6;
-    color: #24292e;
-    background-color: #ffffff;
+    color: {fg};
+    background-color: {bg};
 }}
 /* Zweispaltiges Grundlayout: links die Inhaltsverzeichnis-Sidebar, rechts der
    Text. Der Wrapper ist immer vorhanden, damit Server-Toolbar-Injektion und
@@ -79,7 +83,7 @@ body {{
     overflow-y: auto;
     font-size: 0.9em;
     padding-right: 12px;
-    border-right: 1px solid #eaecef;
+    border-right: 1px solid {toc_border};
 }}
 .md-toc ul {{
     list-style: none;
@@ -90,7 +94,7 @@ body {{
     margin: 0.15em 0;
 }}
 .md-toc a {{
-    color: #0366d6;
+    color: {link};
 }}
 .md-toc a:hover {{
     text-decoration: underline;
@@ -105,16 +109,16 @@ body {{
     margin-bottom: 16px;
     font-weight: 600;
     line-height: 1.25;
-    /* Anker aus der Sidebar duerfen nicht unter der Sticky-Toolbar landen */
+{head_color}    /* Anker aus der Sidebar duerfen nicht unter der Sticky-Toolbar landen */
     scroll-margin-top: 56px;
 }}
-.markdown-body h1 {{ font-size: 2em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }}
-.markdown-body h2 {{ font-size: 1.5em; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }}
+.markdown-body h1 {{ font-size: 2em; border-bottom: 1px solid {toc_border}; padding-bottom: 0.3em; }}
+.markdown-body h2 {{ font-size: 1.5em; border-bottom: 1px solid {toc_border}; padding-bottom: 0.3em; }}
 .markdown-body h3 {{ font-size: 1.25em; }}
 .markdown-body p {{ margin-top: 0; margin-bottom: 16px; }}
 .markdown-body code {{
     padding: 0.2em 0.4em;
-    background-color: rgba(27,31,35,0.05);
+    background-color: {inline_code_bg};
     border-radius: 3px;
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     font-size: 85%;
@@ -124,21 +128,21 @@ body {{
     overflow: auto;
     font-size: 85%;
     line-height: 1.45;
-    background-color: #f6f8fa;
+    background-color: {panel_bg};
     border-radius: 6px;
-    border: 1px solid #e1e4e8;
+    border: 1px solid {pre_border};
 }}
 .markdown-body pre code {{
     background: transparent;
     padding: 0;
     border: none;
-    font-size: 100%;
+    font-size: 100%;{pre_code_color}
 }}
 .markdown-body blockquote {{
     margin: 0 0 16px 0;
     padding: 0 1em;
-    color: #6a737d;
-    border-left: 0.25em solid #dfe2e5;
+    color: {blockquote_fg};
+    border-left: 0.25em solid {border};
 }}
 .markdown-body table {{
     border-collapse: collapse;
@@ -151,21 +155,21 @@ body {{
 }}
 .markdown-body table th, .markdown-body table td {{
     padding: 6px 13px;
-    border: 1px solid #dfe2e5;
+    border: 1px solid {border};
 }}
 .markdown-body table tr {{
-    background-color: #ffffff;
-    border-top: 1px solid #c6cbd1;
+    background-color: {bg};
+    border-top: 1px solid {row_border};
 }}
 .markdown-body table tr:nth-child(2n) {{
-    background-color: #f6f8fa;
+    background-color: {panel_bg};
 }}
 .markdown-body img {{
     max-width: 100%;
     box-sizing: border-box;
 }}
 .markdown-body a {{
-    color: #0366d6;
+    color: {link};
     text-decoration: none;
 }}
 .markdown-body a:hover {{
@@ -185,155 +189,54 @@ body {{
     height: 0.25em;
     padding: 0;
     margin: 24px 0;
-    background-color: #e1e4e8;
+    background-color: {hr_bg};
     border: 0;
 }}
 """
 
-CSS_DARK = """
-body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    font-size: {font_size}px;
-    line-height: 1.6;
-    color: #c9d1d9;
-    background-color: #0d1117;
-}}
-/* Zweispaltiges Grundlayout: links die Inhaltsverzeichnis-Sidebar, rechts der
-   Text. Der Wrapper ist immer vorhanden, damit Server-Toolbar-Injektion und
-   CSS auch ohne Sidebar dieselbe Struktur vorfinden. */
-.md-page {{
-    max-width: 90%;
-    margin: 0 auto;
-    padding: 20px 40px;
-    display: flex;
-    align-items: flex-start;
-    gap: 32px;
-}}
-.md-content {{
-    flex: 1 1 auto;
-    min-width: 0;
-}}
-.md-toc {{
-    position: sticky;
-    top: 0;
-    flex: 0 0 240px;
-    align-self: flex-start;
-    max-height: 100vh;
-    overflow-y: auto;
-    font-size: 0.9em;
-    padding-right: 12px;
-    border-right: 1px solid #21262d;
-}}
-.md-toc ul {{
-    list-style: none;
-    margin: 0;
-    padding-left: 0.9em;
-}}
-.md-toc li {{
-    margin: 0.15em 0;
-}}
-.md-toc a {{
-    color: #58a6ff;
-}}
-.md-toc a:hover {{
-    text-decoration: underline;
-}}
-@media (max-width: 900px) {{
-    .md-page {{ display: block; }}
-    .md-toc {{ display: none; }}
-}}
-.markdown-body h1, .markdown-body h2, .markdown-body h3,
-.markdown-body h4, .markdown-body h5, .markdown-body h6 {{
-    margin-top: 24px;
-    margin-bottom: 16px;
-    font-weight: 600;
-    line-height: 1.25;
-    color: #c9d1d9;
-    /* Anker aus der Sidebar duerfen nicht unter der Sticky-Toolbar landen */
-    scroll-margin-top: 56px;
-}}
-.markdown-body h1 {{ font-size: 2em; border-bottom: 1px solid #21262d; padding-bottom: 0.3em; }}
-.markdown-body h2 {{ font-size: 1.5em; border-bottom: 1px solid #21262d; padding-bottom: 0.3em; }}
-.markdown-body h3 {{ font-size: 1.25em; }}
-.markdown-body p {{ margin-top: 0; margin-bottom: 16px; }}
-.markdown-body code {{
-    padding: 0.2em 0.4em;
-    background-color: rgba(110,118,129,0.2);
-    border-radius: 3px;
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 85%;
-}}
-.markdown-body pre {{
-    padding: 16px;
-    overflow: auto;
-    font-size: 85%;
-    line-height: 1.45;
-    background-color: #161b22;
-    border-radius: 6px;
-    border: 1px solid #30363d;
-}}
-.markdown-body pre code {{
-    background: transparent;
-    padding: 0;
-    border: none;
-    font-size: 100%;
-    color: #c9d1d9;
-}}
-.markdown-body blockquote {{
-    margin: 0 0 16px 0;
-    padding: 0 1em;
-    color: #8b949e;
-    border-left: 0.25em solid #30363d;
-}}
-.markdown-body table {{
-    border-collapse: collapse;
-    border-spacing: 0;
-    display: block;
-    width: max-content;
-    max-width: 100%;
-    overflow: auto;
-    margin-bottom: 16px;
-}}
-.markdown-body table th, .markdown-body table td {{
-    padding: 6px 13px;
-    border: 1px solid #30363d;
-}}
-.markdown-body table tr {{
-    background-color: #0d1117;
-    border-top: 1px solid #21262d;
-}}
-.markdown-body table tr:nth-child(2n) {{
-    background-color: #161b22;
-}}
-.markdown-body img {{
-    max-width: 100%;
-    box-sizing: border-box;
-}}
-.markdown-body a {{
-    color: #58a6ff;
-    text-decoration: none;
-}}
-.markdown-body a:hover {{
-    text-decoration: underline;
-}}
-.markdown-body ul, .markdown-body ol {{
-    padding-left: 2em;
-    margin-bottom: 16px;
-}}
-.markdown-body li + li {{
-    margin-top: 0.25em;
-}}
-.markdown-body del {{
-    text-decoration: line-through;
-}}
-.markdown-body hr {{
-    height: 0.25em;
-    padding: 0;
-    margin: 24px 0;
-    background-color: #21262d;
-    border: 0;
-}}
-"""
+_CSS_PALETTE_LIGHT = {
+    'fg': '#24292e',
+    'bg': '#ffffff',
+    'toc_border': '#eaecef',
+    'link': '#0366d6',
+    'blockquote_fg': '#6a737d',
+    'border': '#dfe2e5',
+    'row_border': '#c6cbd1',
+    'inline_code_bg': 'rgba(27,31,35,0.05)',
+    'pre_border': '#e1e4e8',
+    'hr_bg': '#e1e4e8',
+    'panel_bg': '#f6f8fa',
+    'head_color': '',
+    'pre_code_color': '',
+}
+
+_CSS_PALETTE_DARK = {
+    'fg': '#c9d1d9',
+    'bg': '#0d1117',
+    'toc_border': '#21262d',
+    'link': '#58a6ff',
+    'blockquote_fg': '#8b949e',
+    'border': '#30363d',
+    'row_border': '#21262d',
+    'inline_code_bg': 'rgba(110,118,129,0.2)',
+    'pre_border': '#30363d',
+    'hr_bg': '#21262d',
+    'panel_bg': '#161b22',
+    'head_color': '    color: #c9d1d9;\n',
+    'pre_code_color': '\n    color: #c9d1d9;',
+}
+
+
+def _css_with_palette(palette: dict) -> str:
+    """Ersetzt die Farbplatzhalter; laesst {font_size} unberuehrt."""
+    css = _CSS_TEMPLATE
+    for key, value in palette.items():
+        css = css.replace("{" + key + "}", value)
+    return css
+
+
+CSS_LIGHT = _css_with_palette(_CSS_PALETTE_LIGHT)
+CSS_DARK = _css_with_palette(_CSS_PALETTE_DARK)
 
 # Wird hinter CSS_LIGHT/CSS_DARK gehaengt und greift nur beim PDF-Export
 # (QWebEnginePage.printToPdf in md_dis.py). Ersetzt das Dark-Theme durch die
