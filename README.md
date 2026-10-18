@@ -7,17 +7,16 @@ A Markdown viewer for Windows with diagram support, available in **two variants*
 | File | `md_dis.py` (PyQt6 GUI) | `md_dis_server.py` (headless) |
 | Interaction | Local window | Browser (index, raw, live view, upload) |
 | Use case | Interactive viewing / editing workflow | Remote reading, sharing, CI, Watch |
-| Current build | `dist/md-dis/` — 1.4.3 | `dist/md-dis-server/` — 1.4.4 |
+| Current build | `dist/md-dis/` — 1.4.5 | `dist/md-dis-server/` — 1.4.6 |
 
 Both share a single **Qt-free render core** (`md_render.py`) — same output in GUI and server.
 
-**Status 2026-10-15:** the source is at **1.4.4** (1.4 series with the table-of-contents
-sidebar and the frontmatter block-scalar fix). Both frozen builds are current again:
-`dist/md-dis/` (1.4.3) and `dist/md-dis-server/` (1.4.4) include the `![[…]]` embed,
-the `strip_frontmatter` fix, the TOC feature and the frontmatter fix. Newer commits on
-top of 1.4.4 add **wiki links** (`[[…]]`), the optional **SHA256** check for the JAR
-download and an **LRU server cache**; these are not part of a release build yet, so
-`VERSION` still reads 1.4.4.
+**Status 2026-10-18:** the source is at **1.4.6**, and both frozen builds are current:
+`dist/md-dis/` (**1.4.5**) and `dist/md-dis-server/` (**1.4.6**) include the `![[…]]`
+embed, the `strip_frontmatter` fix, the TOC feature, the frontmatter fix, the
+**wiki links** (`[[…]]`), the optional **SHA256** check for the JAR download and the
+**LRU server cache**, plus the review follow-up (CSP `img-src 'self' data:`, 10 MB
+document limit, directory URLs → 404).
 
 ---
 
@@ -178,7 +177,7 @@ Note: the frozen executables must be run from a **local** Windows path
 
 ```python
 # md_render.py
-VERSION = "1.4.4"
+VERSION = "1.4.6"
 ```
 
 Both variants import `VERSION` from the render core, so a frozen executable
@@ -220,8 +219,8 @@ dist/md-dis-server/md-dis-server.exe --port 8080
 ```
 
 The source version moves ahead of the frozen builds, so a binary reports the
-version it was frozen with, not the current one. `dist/md-dis/` prints 1.4.3 and
-`dist/md-dis-server/` 1.4.4 while the source is at 1.4.4.
+version it was frozen with, not the current one. `dist/md-dis/` prints 1.4.5 and
+`dist/md-dis-server/` 1.4.6 while the source is at 1.4.6.
 
 ### Changelog
 
