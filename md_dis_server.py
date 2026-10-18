@@ -415,7 +415,9 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
             entry = server._cache.get(key)
         cached = entry[1] if entry and entry[0] == start_ns else None
         if cached is None:
-            text = target.read_text(encoding="utf-8")
+            # utf-8-sig wie in der GUI: eine BOM darf die Frontmatter-Erkennung
+            # nicht stoeren.
+            text = target.read_text(encoding="utf-8-sig")
             html = markdown_to_html(text, dark_mode=dark, zoom_level=zoom, sandbox=True, toc=toc)
             if CONFIG["watch"]:
                 html = _inject_watch(html, rel)

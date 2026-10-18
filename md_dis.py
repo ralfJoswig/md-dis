@@ -794,7 +794,10 @@ class MarkdownViewer(QMainWindow):
             self.statusBar().showMessage(f"Lade: {file_path}")
             QApplication.processEvents()
 
-            with open(file_path, 'r', encoding='utf-8') as f:
+            # utf-8-sig: eine BOM am Dateianfang wird entfernt, sonst bleibt sie
+            # als unsichtbares Zeichen stehen und die Frontmatter-Erkennung (^---)
+            # schlaegt fehl.
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
                 md_text = f.read()
             self.current_file = file_path
 
@@ -901,7 +904,9 @@ class MarkdownViewer(QMainWindow):
         if not self.current_file or self.editor is None:
             return False
         try:
-            with open(self.current_file, 'w', encoding='utf-8') as f:
+            # newline="": Python uebersetzt \n sonst je nach Plattform in \r\n und
+            # eine LF-Datei waere nach dem Speichern komplett auf CRLF umgestellt.
+            with open(self.current_file, 'w', encoding='utf-8', newline='') as f:
                 f.write(self.editor.toPlainText())
             self.editor.document().setModified(False)
             self._dirty = False
