@@ -64,8 +64,8 @@ python -m pytest
 ```
 
 One test is marked `xfail`: it documents a known mismatch between the wiki-link
-anchor and the heading `id` for headings containing underscores (see the
-"Known issues" in `HANDOFF.md`). It starts passing once that is fixed.
+anchor and the heading `id` for headings containing underscores (see
+"Bekannte Probleme" in `HANDOFF.md`). It starts passing once that is fixed.
 
 ## Usage
 
