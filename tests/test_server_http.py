@@ -85,6 +85,15 @@ def test_foreign_host_is_rejected(server):
     assert status == 403
 
 
+def test_directory_returns_404(server):
+    # Review M7: Verzeichnisse lieferten eine 301 auf sich selbst (Endlosschleife).
+    root = CONFIG["root"]
+    (root / "unterordner").mkdir()
+    assert _get(server + "/unterordner")[0] == 404
+    assert _get(server + "/unterordner/")[0] == 404
+
+
+
 def test_oversized_markdown_returns_413(server, tmp_path, monkeypatch):
     monkeypatch.setattr(md_dis_server, "MAX_MD_BYTES", 8)
     root = CONFIG["root"]

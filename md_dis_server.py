@@ -495,12 +495,10 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
                 ctype, _enc = mimetypes.guess_type(target.name)
                 self._last_status = 200
                 self._send(200, body, ctype or "application/octet-stream")
-        elif target.is_dir():
-            self._last_status = 301
-            self.send_response(301)
-            self.send_header("Location", f"/{urllib.parse.quote(rel)}/")
-            self.end_headers()
         else:
+            # Unterverzeichnisse (auch mit Slash) gibt es nicht als Index,
+            # deshalb hier direkt 404 statt eines 301 auf "/dir/", der
+            # anschliessend wieder auf sich selbst umleitete (Review M7).
             self._last_status = 404
             self._send_text(404, f"Nicht gefunden: {url_path}")
 

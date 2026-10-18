@@ -1165,11 +1165,6 @@ def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 
     # Strip YAML frontmatter if present
     frontmatter, md_text = strip_frontmatter(md_text)
 
-    # Ein im Text platzierter [TOC]-Marker wird von der toc-Extension bereits
-    # inline ersetzt; dann keine zusaetzliche Sidebar erzeugen (sonst zwei
-    # Verzeichnisse im Dokument).
-    has_toc_marker = "[TOC]" in md_text
-
     # Extract PlantUML/Mermaid blocks BEFORE markdown conversion
     # (otherwise pygments/codehilite overwrites the language class). Der Parser
     # respektiert Code-Fences, damit Beispiel-Snippets in anderen Code-Bloecken
@@ -1204,6 +1199,13 @@ def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 
     # Wiki-Links [[...]] – niedriger als Bilder, damit ![[bild.png]] von EmbedImageProcessor gefangen wird
     md.inlinePatterns.register(WikiLinkProcessor(WIKILINK_PATTERN, md, base_path), "md_dis_wikilink", 170)
     content = md.convert(md_text)
+
+    # Ein inline platzierter [TOC]-Marker wurde von der toc-Extension ersetzt
+    # (Ergebnis traegt die Klasse "toc"); dann keine zusaetzliche Sidebar
+    # erzeugen (sonst zwei Verzeichnisse im Dokument). Bewusst erst am
+    # konvertierten Inhalt pruefen: Ein [TOC] in einem Code-Block ist kein
+    # Marker und darf die Sidebar nicht unterdruecken (Review M9).
+    has_toc_marker = '<div class="toc">' in content
 
     # Inhaltsverzeichnis aus den Ueberschriften (h1-h3). md.toc liefert das
     # fertige <div class="toc">...</div>; die toc-Extension vergibt dabei auch

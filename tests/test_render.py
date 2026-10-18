@@ -150,6 +150,19 @@ class TestExtractDiagramBlocks:
         # End-to-End: das Beispiel im Codeblock darf keinen Renderer anwerfen.
         html = markdown_to_html("````text\n```plantuml\nA -> B\n```\n````\n")
         assert "A -&gt; B" in html or "A -> B" in html
+
+
+class TestTocMarker:
+    # Review M9: "[TOC]" in einem Code-Block ist kein Marker und darf die
+    # Sidebar nicht unterdruecken.
+    def test_real_marker_suppresses_sidebar(self):
+        html = markdown_to_html("[TOC]\n\n# A\n\n## B\n", toc=True)
+        assert '<nav class="md-toc">' not in html
+        assert '<div class="toc">' in html
+
+    def test_marker_inside_code_fence_keeps_sidebar(self):
+        html = markdown_to_html("```\n[TOC]\n```\n\n# A\n\n## B\n", toc=True)
+        assert '<nav class="md-toc">' in html
         assert "plantuml-error" not in html
 
 

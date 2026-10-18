@@ -106,6 +106,7 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 11. **Diagramm-Fences nicht wieder per `re.sub` über den ganzen Text suchen:** Das lief auch in fremde Code-Blöcke hinein (Bug aus Review M1). Extraktion gehört in `_extract_diagram_blocks` mit Fence-Zustand.
 12. **`_slugify` an die toc-Extension gekoppelt lassen:** Anker müssen exakt die Heading-`id` treffen. Eine eigene Slugify wich bei Unterstrichen ab (Review M3).
 13. **Speichern mit `newline=""`, Lesen mit `utf-8-sig`:** Ohne `newline=""` stellt eine GUI-Speicherung LF auf CRLF um (Review M4); ohne `utf-8-sig` verhindert eine BOM die Frontmatter-Erkennung `^---` (Review N9). Gilt in GUI und Server.
+14. **`[TOC]` erst am konvertierten Inhalt prüfen** (`<div class="toc">` im Ergebnis), nicht per `"[TOC]" in md_text`: Sonst zählt ein Beispiel in einem Code-Block fälschlich als Marker und die Sidebar verschwindet (Review M9). Verzeichnis-URLs liefern `404`, keinen `301` auf sich selbst (Review M7).
 
 ## Bekannte Probleme
 - **Doppelte Heading-ids:** Kommt eine Überschrift mehrfach vor, nummeriert die toc-Extension (`titel`, `titel_1`, …). `_slugify` kennt nur die Basis, ein `[[Datei#titel]]`-Anker trifft also den ersten Treffer. Offen; die Anker-Angleichung (Review M3) ist erledigt.
