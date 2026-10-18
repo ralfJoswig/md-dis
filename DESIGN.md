@@ -46,10 +46,24 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
 - Da `![[…]]` vorher kein gültiges Markdown war, wird kein bestehendes Dokument
   umgedeutet.
 
+#### Wiki-Links `[[…]]`
+- `WikiLinkProcessor` in `md_render.py`, Priorität **170** – also **hinter** dem
+  Bild-Embed (175), damit `![[bild.png]]` weiterhin als Bild gilt und nicht als
+  Link missverstanden wird.
+- `[[Datei]]` ergänzt bei fehlender Dateiendung `.md`; `[[Datei#Abschnitt]]`
+  hängt den über `_slugify` erzeugten Anker an; `[[Datei|Alias]]` setzt den
+  Linktext (Default: Dateiname ohne Endung).
+- Wie das Bild-Embed ein `InlineProcessor` – in Code-Fences und Inline-Code
+  bleibt die Syntax sichtbarer Text.
+- Liefert ein `etree.Element("a")`, dadurch werden `href` und Linktext escaped.
+
 ### Diagramm-Unterstützung
 - **Mermaid**: Server-seitig via `mmdc` (mermaid-cli, npm install -g @mermaid-js/mermaid-cli)
 - **PlantUML**: Lokales Java + `plantuml.jar` (im gleichen Verzeichnis wie die .exe)
   - Automatischer Download beim ersten Start, wenn Java vorhanden ist
+  - Der Download ist atomar (`plantuml.jar.part` + `os.replace`); liefert die
+    Release-Seite eine `plantuml.jar.sha256`, wird der Download zusätzlich gegen
+    deren Prüfsumme verifiziert (sonst läuft er unverändert weiter).
 
 ### Frontmatter
 - `strip_frontmatter` in `md_render.py` erkennt YAML-Frontmatter am Dateianfang und
@@ -161,3 +175,16 @@ python build.py
 
 Die .exe befindet sich danach in `dist/md-dis/`.
 `plantuml.jar` wird bei Bedarf automatisch heruntergeladen (benötigt Java + Internet).
+
+## Sicherheit (Server)
+
+- **Pfad-Traversal:** `resolve_within_root` löst den Zielpfad auf und prüft
+  anschließend mit `Path.relative_to(root)`, ob er innerhalb der Wurzel bleibt –
+  statt eines Präfix-Vergleichs auf Strings, der z. B. `Root2` fälschlich als
+  innerhalb von `Root` akzeptiert hätte. Pfade mit versteckten Segmenten
+  (`.git`, `.venv`, `.env`) werden zusätzlich blockiert.
+- **CSP & Header:** jede Antwort trägt `Content-Security-Policy`
+  (`script-src 'self'`) und `X-Content-Type-Options: nosniff`; der Watch-Client
+  lädt sein Skript über `GET /watch.js` (Pfad per `data-path`).
+- **DNS-Rebinding/CSRF:** Fremde `Host`-Header werden (bei Loopback-Bindung)
+  abgewiesen, `POST` ohne passenden `Origin` ebenfalls.

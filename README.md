@@ -14,7 +14,10 @@ Both share a single **Qt-free render core** (`md_render.py`) — same output in 
 **Status 2026-10-15:** the source is at **1.4.4** (1.4 series with the table-of-contents
 sidebar and the frontmatter block-scalar fix). Both frozen builds are current again:
 `dist/md-dis/` (1.4.3) and `dist/md-dis-server/` (1.4.4) include the `![[…]]` embed,
-the `strip_frontmatter` fix, the TOC feature and the frontmatter fix.
+the `strip_frontmatter` fix, the TOC feature and the frontmatter fix. Newer commits on
+top of 1.4.4 add **wiki links** (`[[…]]`), the optional **SHA256** check for the JAR
+download and an **LRU server cache**; these are not part of a release build yet, so
+`VERSION` still reads 1.4.4.
 
 ---
 
@@ -22,11 +25,12 @@ the `strip_frontmatter` fix, the TOC feature and the frontmatter fix.
 
 - GitHub-Flavored Markdown (tables, code blocks, strikethrough, lists)
 - **Diagram rendering inside Markdown:**
-  - **PlantUML** — via `plantuml.jar` (Java). The JAR is downloaded automatically on first use. Search order: `$MD_DIS_PLANTUML_JAR` → directory of the executable/script → `%LOCALAPPDATA%\md-dis`. The download goes to the executable directory if writable, otherwise to the user cache.
+  - **PlantUML** — via `plantuml.jar` (Java). The JAR is downloaded automatically on first use. Search order: `$MD_DIS_PLANTUML_JAR` → directory of the executable/script → `%LOCALAPPDATA%\md-dis`. The download goes to the executable directory if writable, otherwise to the user cache; if the release provides a `.sha256` checksum, the download is verified against it.
   - **Mermaid** — via `mmdc` (mermaid-cli), if installed
 - Dark / light theme toggle
 - Zoom (`Ctrl+` / `Ctrl-` / `Ctrl+0`, mouse wheel)
 - **Image embed** — `![[pfad/grafik.png]]`, optionally `![[grafik.png|Alt-Text]]`
+- **Wiki links** — `[[datei.md]]`, `[[datei.md#Abschnitt]]`, optionally `[[datei.md|Alias]]`
 - **Table of contents** — a sticky sidebar generated from the headings (h1–h3), toggleable
 - **PDF export** (`Ctrl+P`) with page format, orientation and margin
 - File Watch with auto-reload (`F5`)
@@ -78,6 +82,15 @@ stays visible as text, so it can be documented without being executed. Only
 `.png`, `.jpg`, `.jpeg`, `.gif`, `.svg` and `.webp` are embedded; for anything
 else the text stays visible. The result is identical to `![alt](grafik.png)`, so
 the usual image syntax remains the better choice whenever a caption is wanted.
+Works in the desktop app and in the server.
+
+**Wiki links.** `[[ … ]]` links to another file or to a section inside it. A
+link without a file extension gets `.md` appended, an `#Abschnitt` suffix is
+resolved to the heading anchor, and the optional `|Alias` sets the visible
+text. Like the image embed, the syntax is handled by an inline processor, so
+inside code blocks and inline code it stays visible as text; `![[…]]` is the
+image form and keeps priority over the link form. The result is an ordinary
+`<a>` element, so relative paths behave the same as in any other Markdown link.
 Works in the desktop app and in the server.
 
 **Table of contents.** Every document that has headings gets a sticky sidebar
