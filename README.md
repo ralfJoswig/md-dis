@@ -153,6 +153,12 @@ Endpoints:
 | `GET /poll?path=…` | Change stamp for the watch client |
 | `GET /upload` / `POST /upload` | Browser upload of `.md` files (stored under `<root>/uploads/`, max 10 MB) |
 
+Responses carry a strict `Content-Security-Policy`: scripts only from the
+server (`/watch.js`), images only same-origin or `data:` — remote images inside
+a document are not loaded. Markdown files larger than 10 MB are refused with
+`413`; a file with broken UTF-8 is still rendered (invalid bytes are replaced
+instead of failing).
+
 ## Build
 
 ```bash

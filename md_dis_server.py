@@ -32,7 +32,7 @@ from md_render import VERSION, markdown_to_html
 CONFIG = {}  # wird in main() gefüllt
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-       "img-src * data:; object-src 'none'; base-uri 'none'; form-action 'self'")
+       "img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'")
 
 WATCH_JS = """(function() {
   var path = document.currentScript.dataset.path;
@@ -58,6 +58,8 @@ class MDDisServer(ThreadingHTTPServer):
         self._cache = {}
         self._lock = threading.Lock()
         self._max_cache = 20
+        # (Zeitstempel, HTML) der Index-Liste; siehe INDEX_CACHE_TTL.
+        self._index_cache = (0.0, "")
 
 
 def resolve_within_root(root: Path, rel: str) -> Path | None:
@@ -79,6 +81,13 @@ def resolve_within_root(root: Path, rel: str) -> Path | None:
 MD_SUFFIXES = (".md", ".markdown")
 # Außer Markdown werden nur Bilder ausgeliefert (für eingebettete Grafiken)
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
+
+# Größere Markdown-Dateien werden nicht gerendert (deckt sich mit dem
+# Upload-Limit von 10 MB).
+MAX_MD_BYTES = 10 * 1024 * 1024
+# Index-Liste kurz zwischenspeichern, damit wiederholte GET / nicht jedes Mal
+# den ganzen Baum durchlaufen (Watch-Clients pollen nur /poll, nicht den Index).
+INDEX_CACHE_TTL = 2.0
 
 
 def _is_hidden(rel: str) -> bool:
@@ -332,6 +341,20 @@ button {{ font-size: 1em; padding: 6px 16px; }}
 
     # ------------------------------------------------------------------ index
     def _handle_index(self):
+        server: MDDisServer = self.server
+        now = time.monotonic()
+        with server._lock:
+            stamp, cached = server._index_cache
+        if cached and now - stamp < INDEX_CACHE_TTL:
+            html = cached
+        else:
+            html = self._build_index_html()
+            with server._lock:
+                server._index_cache = (time.monotonic(), html)
+        self._last_status = 200
+        self._send_text(200, html, "text/html; charset=utf-8")
+
+    def _build_index_html(self) -> str:
         root = CONFIG["root"]
         files = []
         for dirpath, dirs, names in os.walk(root):
@@ -352,7 +375,7 @@ button {{ font-size: 1em; padding: 6px 16px; }}
             rows.append(f'<li><a href="/{safe}">{escape(rel)}</a></li>')
         listing = "\n".join(rows) if rows else "<li><i>Keine Markdown-Dateien gefunden.</i></li>"
 
-        html = f"""<!DOCTYPE html>
+        return f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -373,8 +396,6 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
 </body>
 </html>
 """
-        self._last_status = 200
-        self._send_text(200, html, "text/html; charset=utf-8")
 
     # ------------------------------------------------------------------- poll
     def _handle_poll(self, rel: str):
@@ -415,9 +436,19 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
             entry = server._cache.get(key)
         cached = entry[1] if entry and entry[0] == start_ns else None
         if cached is None:
-            # utf-8-sig wie in der GUI: eine BOM darf die Frontmatter-Erkennung
-            # nicht stoeren.
-            text = target.read_text(encoding="utf-8-sig")
+            try:
+                if target.stat().st_size > MAX_MD_BYTES:
+                    self._last_status = 413
+                    self._send_text(413, "Markdown-Datei zu groß (max. 10 MB)")
+                    return
+                # utf-8-sig wie in der GUI: eine BOM darf die Frontmatter-
+                # Erkennung nicht stoeren. errors="replace": fehlerhaft
+                # kodierte Bytes loesen keinen irrefuehrenden 500er aus.
+                text = target.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                self._last_status = 500
+                self._send_text(500, "Datei konnte nicht gelesen werden")
+                return
             html = markdown_to_html(text, dark_mode=dark, zoom_level=zoom, sandbox=True, toc=toc)
             if CONFIG["watch"]:
                 html = _inject_watch(html, rel)
@@ -555,9 +586,15 @@ def main(argv=None):
             return 2
         redirect = rel.as_posix()
 
+    server = MDDisServer((args.host, args.port), MDDisHandler)
+    # Erst nach dem Binden steht der tatsaechliche Port fest: mit --port 0
+    # waehlt das Betriebssystem einen freien Port. allowed_hosts muss diesen
+    # Port kennen, sonst antwortet der Host-Check auf jeden Request mit 403.
+    actual_port = server.server_address[1]
+
     CONFIG.update(
         host=args.host,
-        port=args.port,
+        port=actual_port,
         root=root,
         dark=args.dark,
         zoom=args.zoom,
@@ -565,12 +602,11 @@ def main(argv=None):
         toc=args.toc,
         redirect=redirect,
         # Bei Loopback-Bindung nur localhost-Host-Header zulassen (DNS-Rebinding)
-        allowed_hosts=({f"localhost:{args.port}", f"127.0.0.1:{args.port}", f"[::1]:{args.port}"}
+        allowed_hosts=({f"localhost:{actual_port}", f"127.0.0.1:{actual_port}", f"[::1]:{actual_port}"}
                        if args.host in ("127.0.0.1", "localhost", "::1") else None),
     )
 
-    server = MDDisServer((args.host, args.port), MDDisHandler)
-    print(f"md-dis-server v{VERSION} – http://{args.host}:{args.port}")
+    print(f"md-dis-server v{VERSION} – http://{args.host}:{actual_port}")
     print(f"  Wurzel: {root}")
     if redirect:
         print(f"  Datei:  {redirect} (direkte Anzeige)")

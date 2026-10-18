@@ -198,7 +198,14 @@ Die .exe befindet sich danach in `dist/md-dis/`.
   innerhalb von `Root` akzeptiert hätte. Pfade mit versteckten Segmenten
   (`.git`, `.venv`, `.env`) werden zusätzlich blockiert.
 - **CSP & Header:** jede Antwort trägt `Content-Security-Policy`
-  (`script-src 'self'`) und `X-Content-Type-Options: nosniff`; der Watch-Client
-  lädt sein Skript über `GET /watch.js` (Pfad per `data-path`).
+  (`script-src 'self'`, `img-src 'self' data:`) und `X-Content-Type-Options:
+  nosniff`; der Watch-Client lädt sein Skript über `GET /watch.js` (Pfad per
+  `data-path`). Fremdbilder in einem Dokument werden damit **nicht** geladen.
+- **Größen-/Kodier-Grenzen:** Markdown über 10 MB → 413; gelesen wird mit
+  `utf-8-sig` und `errors="replace"` (BOM-tolerant, kein 500er bei kaputten
+  Bytes). Der Index wird kurz zwischengespeichert, damit wiederholte Aufrufe
+  nicht jedes Mal den Baum durchlaufen.
 - **DNS-Rebinding/CSRF:** Fremde `Host`-Header werden (bei Loopback-Bindung)
-  abgewiesen, `POST` ohne passenden `Origin` ebenfalls.
+  abgewiesen, `POST` ohne passenden `Origin` ebenfalls. Der erlaubte Port kommt
+  aus der tatsächlichen Bindung (`server.server_address[1]`), damit `--port 0`
+  funktioniert.
