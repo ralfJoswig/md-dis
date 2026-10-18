@@ -143,8 +143,8 @@ SOFTWARE."""
 
 
 # Einstellungen liegen in einer INI neben der EXE – passend dazu, dass auch
-# preview/ und plantuml.jar dort landen (siehe _app_dir). Nicht in der
-# Registry: der Ordner lässt sich damit samt Einstellungen kopieren.
+# plantuml.jar dort landet (siehe app_dir). Nicht in der Registry: der Ordner
+# lässt sich damit samt Einstellungen kopieren.
 SETTINGS_FILE = "md-dis.ini"
 
 # Seitenformate im Dialog. Gespeichert wird der Enum-Name, nicht der
@@ -840,28 +840,18 @@ class MarkdownViewer(QMainWindow):
         if self.web_view is not None:
             if not self.edit_mode:
                 self.stack.setCurrentWidget(self.web_view)
-            tmp_html = os.path.join(self._preview_dir(), ".md-dis-preview.html")
-            with open(tmp_html, 'w', encoding='utf-8') as hf:
-                hf.write(html)
             self._page_loaded = False
             self._update_pdf_action()
             # Anzeige per setHtml mit Basis-URL auf dem Verzeichnis der
             # Markdown-Datei. Ueber setUrl(QUrl.fromLocalFile(...)) loesten
-            # sich relative Bildpfade dagegen gegen preview/ auf und brachen.
+            # sich relative Bildpfade gegen preview/ auf und brachen.
             base_url = QUrl.fromLocalFile(
                 os.path.dirname(os.path.abspath(self.current_file)) + os.sep
-            ) if self.current_file else QUrl.fromLocalFile(
-                self._preview_dir() + os.sep
-            )
+            ) if self.current_file else QUrl()
             self.web_view.setHtml(html, base_url)
 
         self.progress_bar.setVisible(False)
         self.statusBar().showMessage(f"Geladen: {self.current_file}")
-
-    def _preview_dir(self) -> str:
-        preview_dir = os.path.join(app_dir(), "preview")
-        os.makedirs(preview_dir, exist_ok=True)
-        return preview_dir
 
     def _ensure_editor(self):
         """Lazily create the markdown source editor on first use."""

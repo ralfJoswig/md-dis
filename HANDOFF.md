@@ -58,7 +58,7 @@ Konvention: App-Sprache und sämtliche Meldungen sind **Deutsch**.
 - `print-color-adjust: exact` ist nötig, sonst druckt Chromium Hintergründe nicht.
 
 ### Einstellungen (`QSettings`)
-- `md-dis.ini` (IniFormat) im Verzeichnis aus `app_dir()` – bewusst neben der .exe, damit `preview/`, `plantuml.jar` und die Einstellungen zusammen wandern.
+- `md-dis.ini` (IniFormat) im Verzeichnis aus `app_dir()` – bewusst neben der .exe, damit `plantuml.jar` und die Einstellungen zusammen wandern.
 - Gespeichert: `appearance/darkMode`, `appearance/zoomLevel`, `appearance/showToc`, `pdf/pageSize`, `pdf/landscape`, `pdf/marginPreset`.
 - Lesen **immer** mit `type=bool` / `type=float`. Bei einer von Hand editierten INI kommt der Wert als String zurück, und `bool("false")` ist `True`. Beim app-eigenen Roundtrip liefert QSettings dagegen einen echten `bool`.
 - `sync()` mit `AccessError` → `_settings_persist = False`, die App läuft dann nur noch im Speicher weiter (schreibgeschützter Installationsordner).
