@@ -6,6 +6,7 @@ Wird sowohl von der Desktop-App (md_dis.py) als auch vom HTTP-Server
 """
 
 import html
+import hashlib
 import os
 import re
 import shutil
@@ -13,11 +14,13 @@ import subprocess
 import sys
 import tempfile
 import threading
+import unicodedata
 import urllib.request
 import xml.etree.ElementTree as etree
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from urllib.parse import quote
 
 import markdown
 from markdown.inlinepatterns import InlineProcessor
@@ -592,17 +595,48 @@ def download_plantuml_jar(progress_callback=None) -> bool:
     """Download plantuml.jar from GitHub releases.
 
     Ziel: das Programmverzeichnis, falls beschreibbar, sonst der Benutzer-Cache.
+    Versuch optionaler SHA256-Integritätsprüfung (falls plantuml.jar.sha256 existiert).
     """
     if get_plantuml_jar_path():
         return True
 
     jar_url = "https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar"
+    sha_url = "https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar.sha256"
     target_path = _jar_download_target() / JAR_NAME
     tmp_path = target_path.with_name(JAR_NAME + ".part")
+    sha_tmp_path = target_path.with_name(JAR_NAME + ".sha256.part")
 
     def _say(msg):
         if progress_callback:
             progress_callback(msg)
+
+    expected_sha = None
+    try:
+        _say("Prüfe SHA256-Prüfsumme (optional)...")
+        req_sha = urllib.request.Request(
+            sha_url,
+            headers={"User-Agent": f"md-dis/{VERSION}"}
+        )
+        with urllib.request.urlopen(req_sha, timeout=60) as resp_sha:
+            sha_data = resp_sha.read().strip()
+        try:
+            sha_text = sha_data.decode("utf-8", errors="replace").strip()
+        except Exception:
+            sha_text = ""
+        m = re.search(r"([0-9a-fA-F]{64})", sha_text)
+        if m:
+            expected_sha = m.group(1).lower()
+            _say(f"Erwartete SHA256: {expected_sha}")
+        else:
+            _say("Keine gültige SHA256-Datei gefunden – überspringe Integritätsprüfung.")
+    except Exception as e:
+        _say(f"SHA256-Prüfung nicht möglich: {type(e).__name__}")
+        expected_sha = None
+        try:
+            if sha_tmp_path.exists():
+                sha_tmp_path.unlink()
+        except OSError:
+            pass
 
     try:
         _say(f"Lade plantuml.jar herunter... (Ziel: {target_path})")
@@ -618,8 +652,18 @@ def download_plantuml_jar(progress_callback=None) -> bool:
             _say("Fehler: Heruntergeladene Datei ist leer.")
             return False
 
-        # Erst vollstaendig in eine .part-Datei schreiben, dann atomar umbenennen –
-        # ein abgebrochener Download hinterlaesst so keine kaputte plantuml.jar.
+        if expected_sha:
+            actual_sha = hashlib.sha256(data).hexdigest()
+            if actual_sha != expected_sha:
+                _say(f"SHA256-Mismatch: erwartet {expected_sha}, erhalten {actual_sha}")
+                try:
+                    if tmp_path.exists():
+                        tmp_path.unlink()
+                except OSError:
+                    pass
+                return False
+            _say("SHA256-Prüfung bestanden.")
+
         with open(tmp_path, 'wb') as f:
             f.write(data)
         os.replace(tmp_path, target_path)
@@ -631,6 +675,11 @@ def download_plantuml_jar(progress_callback=None) -> bool:
         try:
             if tmp_path.exists():
                 tmp_path.unlink()
+        except OSError:
+            pass
+        try:
+            if sha_tmp_path.exists():
+                sha_tmp_path.unlink()
         except OSError:
             pass
         _say(f"Fehler beim Herunterladen: {type(e).__name__}: {e}")
@@ -706,7 +755,7 @@ def _plantuml_batch(codes: list[str], sandbox: bool = False) -> list[tuple[str, 
         return [(_diagram_error(f"PlantUML-Fehler: {html.escape(str(e))}", c), False) for c in codes]
 
 
-def render_plantuml(code: str, sandbox: bool = False) -> str:
+def render_plantuml(code: str, sandbox: bool = True) -> str:
     """Render PlantUML code to SVG using local plantuml.jar."""
     return _plantuml_batch([code], sandbox)[0][0]
 
@@ -977,8 +1026,66 @@ class EmbedImageProcessor(InlineProcessor):
         return el, m.start(0), m.end(0)
 
 
+def _slugify(text: str) -> str:
+    """Einfaches Slugify für Anker (kompatibel zu Python-Markdown)."""
+    text = unicodedata.normalize('NFKD', text)
+    text = text.lower()
+    # Ersetze Leerzeichen und Unterstriche durch Bindestriche
+    text = re.sub(r'[\s_]+', '-', text)
+    # Entferne nicht alphanumerische Zeichen außer Bindestrich
+    text = re.sub(r'[^a-z0-9\-]+', '', text)
+    # Mehrere Bindestriche zusammenfassen
+    text = re.sub(r'-+', '-', text)
+    return text.strip('-')
+
+
+WIKILINK_PATTERN = r'(?<!\!)\[\[([^\]\|#]+?)(?:#([^\]\|]+))?(?:\|([^\]]+))?\]\]'
+
+
+class WikiLinkProcessor(InlineProcessor):
+    """Wandelt [[Datei]] bzw. [[Datei#Abschnitt|Alias]] in <a>-Links um."""
+
+    def __init__(self, pattern, md=None, base_path=None):
+        super().__init__(pattern, md)
+        self.base_path = base_path
+
+    def handleMatch(self, m, data):
+        target_raw = (m.group(1) or '').strip()
+        anchor_raw = (m.group(2) or '').strip()
+        alias = (m.group(3) or '').strip()
+
+        if not target_raw:
+            return None, None, None
+
+        # Ziel normalisieren: füge .md hinzu, falls keine Dateiendung
+        target = target_raw
+        # Prüfe, ob bereits eine Erweiterung vorhanden ist
+        p = Path(target)
+        if not p.suffix:
+            target = target + '.md'
+
+        # Anker anhängen falls vorhanden
+        href = target
+        if anchor_raw:
+            href = target + '#' + _slugify(anchor_raw)
+
+        # Anzeigetext bestimmen
+        if alias:
+            link_text = alias
+        else:
+            link_text = Path(target_raw).name
+            link_text_p = Path(link_text)
+            if link_text_p.suffix == '.md':
+                link_text = link_text[:-3]
+
+        el = etree.Element('a')
+        el.set('href', href)
+        el.text = link_text
+        return el, m.start(0), m.end(0)
+
+
 def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 1.0, progress_callback=None,
-                     sandbox: bool = False, toc: bool = False) -> str:
+                     sandbox: bool = False, toc: bool = False, base_path: Path | str | None = None) -> str:
     """Convert markdown text to full HTML page.
 
     sandbox=True renders PlantUML without access to local files/URLs (for untrusted input).
@@ -1040,6 +1147,8 @@ def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 
     md = markdown.Markdown(extensions=extensions, extension_configs=extension_configs)
     # Vor das eingebaute Bildmuster (Prioritaet 160), damit ![...] unberuehrt bleibt.
     md.inlinePatterns.register(EmbedImageProcessor(EMBED_IMAGE_PATTERN), "md_dis_embed", 175)
+    # Wiki-Links [[...]] – niedriger als Bilder, damit ![[bild.png]] von EmbedImageProcessor gefangen wird
+    md.inlinePatterns.register(WikiLinkProcessor(WIKILINK_PATTERN, md, base_path), "md_dis_wikilink", 170)
     content = md.convert(md_text)
 
     # Inhaltsverzeichnis aus den Ueberschriften (h1-h3). md.toc liefert das
@@ -1085,7 +1194,8 @@ def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 
 
     # Mermaid: jeder mmdc-Aufruf startet einen Browser – parallel ausführen
     if todo_mermaid:
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        max_workers = min(4, os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_mermaid, code): (key, code) for key, code in todo_mermaid}
             for future in as_completed(futures):
                 key, code = futures[future]

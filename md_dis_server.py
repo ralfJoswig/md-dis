@@ -57,15 +57,21 @@ class MDDisServer(ThreadingHTTPServer):
         super().__init__(server_address, handler)
         self._cache = {}
         self._lock = threading.Lock()
+        self._max_cache = 20
 
 
 def resolve_within_root(root: Path, rel: str) -> Path | None:
     """Resolve relativen Pfad; nur zulässig, wenn er nicht aus dem Root hinaus führt."""
     if not rel or rel in (".", "/"):
         return root
-    target = (root / rel).resolve()
     root_real = root.resolve()
-    if not str(target).startswith(str(root_real) + os.sep) and str(target) != str(root_real):
+    try:
+        target = (root / rel).resolve()
+    except (OSError, RuntimeError):
+        return None
+    try:
+        target.relative_to(root_real)
+    except ValueError:
         return None
     return target
 
@@ -300,7 +306,16 @@ button {{ font-size: 1em; padding: 6px 16px; }}
 
         upload_dir = CONFIG["root"] / "uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)
+        p = Path(filename)
+        stem, suf = p.stem, p.suffix
         target = upload_dir / filename
+        i = 1
+        while target.exists():
+            candidate = f"{stem}_{i}{suf}"
+            target = upload_dir / candidate
+            i += 1
+            if i > 100:
+                break
         try:
             target.write_bytes(data)
         except OSError:
@@ -309,7 +324,7 @@ button {{ font-size: 1em; padding: 6px 16px; }}
             return
 
         self._last_status = 303
-        rel = (upload_dir / filename).relative_to(CONFIG["root"]).as_posix()
+        rel = target.relative_to(CONFIG["root"]).as_posix()
         self.send_response(303)
         self.send_header("Location", "/" + urllib.parse.quote(rel))
         self.send_header("Content-Length", "0")
@@ -393,7 +408,7 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
     def _send_markdown(self, rel: str, target: Path, start_ns: int, toc: bool):
         dark = CONFIG["dark"]
         zoom = CONFIG["zoom"]
-        # Ein Eintrag pro Datei und TOC-Zustand; ältere Stände werden überschrieben
+        # Ein Eintrag pro Datei und TOC-Zustand
         key = (str(target.resolve()), toc)
         server: MDDisServer = self.server
         with server._lock:
@@ -406,8 +421,18 @@ h1 {{ border-bottom:1px solid {border}; padding-bottom:0.3em; }}
                 html = _inject_watch(html, rel)
             html = _inject_toolbar(html, rel, dark, toc)
             with server._lock:
+                # LRU-ähnlich: entfernen falls vorhanden, dann hinten anhängen
+                server._cache.pop(key, None)
                 server._cache[key] = (start_ns, html)
+                # Begrenzung auf max. 20 Dateien
+                if len(server._cache) > getattr(server, "_max_cache", 20):
+                    oldest = next(iter(server._cache))
+                    server._cache.pop(oldest, None)
         else:
+            with server._lock:
+                # Zugriff bringt Eintrag ans "Ende" der Reihenfolge
+                server._cache.pop(key, None)
+                server._cache[key] = entry
             html = cached
         self._last_status = 200
         self._send_text(200, html, "text/html; charset=utf-8")
