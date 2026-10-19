@@ -20,6 +20,31 @@ VERSION_TARGET = "md_render.py"
 VERSION_RE = re.compile(r'^VERSION\s*=\s*"(\d+)\.(\d+)\.(\d+)"[ \t]*\r?$', re.MULTILINE)
 SET_VERSION_RE = re.compile(r'^(\d+)\.(\d+)$')
 
+# Module, die PyInstaller nur ueber die Analyse-Kette einsammelt, zur Laufzeit
+# aber nie importiert werden (per sys.modules verifiziert):
+#   markdown.extensions.codehilite -> pygments.formatters.img -> PIL
+#   -> numpy (nur typing) -> psutil
+# Dazu das Build-Werkzeug setuptools und optionale Abhaengigkeiten von
+# requests/urllib3 (charset_normalizer), die hier niemand nutzt.
+# Spart rund 31 MB im Bundle und etwas Kaltstartzeit (IO, Virenscanner).
+EXCLUDE_MODULES = (
+    "numpy", "numpy.libs", "PIL", "psutil",
+    "setuptools", "charset_normalizer",
+    "olefile", "defusedxml",
+)
+
+
+def pyinstaller_flags():
+    """Gemeinsame PyInstaller-Optionen fuer GUI- und Server-Build."""
+    flags = []
+    for name in EXCLUDE_MODULES:
+        flags.extend(["--exclude-module", name])
+    # Kein UPX: es wuerde auch die ca. 195 MB grosse Qt6WebEngineCore.dll packen
+    # und den Start durch das Entpacken verlangsamen. UPX ist hier ohnehin nicht
+    # installiert - --noupx macht die Absicht explizit.
+    flags.append("--noupx")
+    return flags
+
 
 def read_version(base_dir):
     """Liest (major, minor, build) aus md_render.py."""
@@ -209,6 +234,7 @@ def build():
             "--onedir",
             "--console",
             "--name", "md-dis-server",
+            *pyinstaller_flags(),
             "md_dis_server.py",
         ]
         major, minor, build_no = apply_version(base_dir, sys.argv)
@@ -224,6 +250,7 @@ def build():
         return
 
     icon_path = os.path.join(base_dir, "icon.ico")
+    splash_path = os.path.join(base_dir, "icon.png")
 
     major, minor, build_no = apply_version(base_dir, sys.argv)
     print(f"Baue md-dis.exe (Version {major}.{minor}.{build_no}) ...")
@@ -233,11 +260,17 @@ def build():
         "--onedir",
         "--windowed",
         "--name", "md-dis",
+        *pyinstaller_flags(),
     ]
 
     if os.path.isfile(icon_path):
         cmd.extend(["--icon", icon_path])
         cmd.extend(["--add-data", f"{icon_path};."])
+
+    if os.path.isfile(splash_path):
+        # Splash nur fuer die GUI (der Server laeuft in der Konsole). PyInstaller
+        # braucht dafuer tkinter im Build-Python und packt Tcl/Tk mit ins Bundle.
+        cmd.extend(["--splash", splash_path])
 
     cmd.append("md_dis.py")
 

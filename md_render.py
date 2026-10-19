@@ -6,7 +6,6 @@ Wird sowohl von der Desktop-App (md_dis.py) als auch vom HTTP-Server
 """
 
 import html
-import hashlib
 import os
 import re
 import shutil
@@ -14,17 +13,20 @@ import subprocess
 import sys
 import tempfile
 import threading
-import urllib.request
 import xml.etree.ElementTree as etree
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+# Bewusst NICHT im Modulkopf: urllib.request, hashlib (nur fuer den JAR-Download)
+# und concurrent.futures (nur fuer parallele Mermaid-Aufrufe). Sie kosten zusammen
+# ~50 ms Importzeit bei jedem Start von GUI und Server, werden aber im Normalfall
+# nie gebraucht. Deshalb erst in der jeweiligen Funktion importieren.
 
 import markdown
 from markdown.extensions.toc import slugify as _toc_slugify
 from markdown.inlinepatterns import InlineProcessor
 
-VERSION = "1.4.6"
+VERSION = "1.4.11"
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
@@ -501,6 +503,11 @@ def download_plantuml_jar(progress_callback=None) -> bool:
     """
     if get_plantuml_jar_path():
         return True
+
+    # Erst beim echten Download importieren: zusammen ~47 ms, die sonst bei jedem
+    # Start anfallen (urllib.request zieht http.client, email und ssl mit).
+    import hashlib
+    import urllib.request
 
     jar_url = "https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar"
     sha_url = "https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar.sha256"
@@ -1157,6 +1164,10 @@ def markdown_to_html(md_text: str, dark_mode: bool = False, zoom_level: float = 
 
     # Mermaid: jeder mmdc-Aufruf startet einen Browser – parallel ausführen
     if todo_mermaid:
+        # Import erst hier: concurrent.futures kostet ~8 ms Importzeit, die nur
+        # Dokumente mit Mermaid-Blöcken ueberhaupt benötigen.
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         max_workers = min(4, os.cpu_count() or 4)
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(_mermaid, code): (key, code) for key, code in todo_mermaid}

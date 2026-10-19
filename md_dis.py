@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """md-dis – Markdown-Viewer mit Diagramm-Unterstützung."""
 
+import re
 import sys
 import os
 from pathlib import Path
@@ -24,8 +25,17 @@ from PyQt6.QtWidgets import (
     QLineEdit, QWidget, QHBoxLayout, QVBoxLayout, QPlainTextEdit, QStackedWidget,
     QMenu, QToolButton, QComboBox, QRadioButton, QButtonGroup, QFormLayout
 )
-from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtWebEngineCore import QWebEngineSettings, QWebEnginePage
+
+# PyQt6.QtWebEngineWidgets/-Core werden bewusst NICHT auf Modulebene importiert:
+# der Import kostet ~25 ms bei jedem Start, die Web-Ansicht entsteht aber erst
+# beim ersten Dokument (_ensure_web_view). Bedingung fuer den spaeten Import:
+# vor der QApplication muss Qt.AA_ShareOpenGLContexts gesetzt sein (siehe main()),
+# sonst bricht PyQt6 mit "QtWebEngineWidgets must be imported or
+# Qt.AA_ShareOpenGLContexts must be set before a QCoreApplication instance is
+# created" ab. Zweite Falle: Chromium baut seine Kommandozeile aus
+# QCoreApplication::arguments(); eine ohne argv erzeugte QApplication
+# (QApplication([])) laesst den spaeten WebEngine-Start mit 0xC0000409
+# abstuerzen (nur im Test relevant - main() uebergibt sys.argv).
 
 
 MERMAID_JS_URL = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"
@@ -41,6 +51,20 @@ def _process_events():
     Anzeige ueberschreibt die neue (Review M8).
     """
     QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+
+# ```plantuml-Fence irgendwo im Text; laengere Zaeune und ~~~ sind ebenfalls
+# gueltig. Billiger Vorfilter fuer den Download-Dialog - ein Fence, der nur als
+# Beispiel in einem Codeblock steht, loest ihn harmlos mit aus.
+_PLANTUML_FENCE_RE = re.compile(
+    r"^[ \t]*(?:`{3,}|~{3,})[ \t]*plantuml\b", re.MULTILINE | re.IGNORECASE
+)
+
+
+def _contains_plantuml_block(text: str) -> bool:
+    """True, wenn der Markdown-Text ein PlantUML-Diagramm enthaelt."""
+    return bool(_PLANTUML_FENCE_RE.search(text))
+
 
 HELP_MARKDOWN = """
 # md-dis – Hilfe
@@ -264,27 +288,46 @@ class PdfOptionsDialog(QDialog):
         return pdf_page_layout(page_size, landscape, margin_mm)
 
 
-class ExternalLinkPage(QWebEnginePage):
-    def __init__(self, viewer, parent=None):
-        super().__init__(parent)
-        self._viewer = viewer
+_external_link_page_cls = None
 
-    def acceptNavigationRequest(self, url, nav_type, is_main_frame):
-        if url.scheme() == "mddis" and url.host() == "back":
-            QTimer.singleShot(0, self._viewer._close_help)
-            return False
-        if not is_main_frame:
-            return True
-        if url.scheme() == "file":
-            path = url.toLocalFile()
-            if path.lower().endswith(('.md', '.markdown', '.mdown', '.mkd')):
-                QTimer.singleShot(0, lambda p=path: self._viewer._load_file(p))
+
+def external_link_page_class():
+    """Liefert die QWebEnginePage-Unterklasse; definiert sie beim ersten Aufruf.
+
+    Die Basisklasse QWebEnginePage gibt es erst mit dem verzoegerten Import von
+    PyQt6.QtWebEngineCore, deshalb steht die Klassendefinition in dieser Funktion
+    und nicht auf Modulebene (siehe Kommentar bei den Qt-Importen oben).
+    """
+    global _external_link_page_cls
+    if _external_link_page_cls is not None:
+        return _external_link_page_cls
+
+    from PyQt6.QtWebEngineCore import QWebEnginePage
+
+    class ExternalLinkPage(QWebEnginePage):
+        def __init__(self, viewer, parent=None):
+            super().__init__(parent)
+            self._viewer = viewer
+
+        def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+            if url.scheme() == "mddis" and url.host() == "back":
+                QTimer.singleShot(0, self._viewer._close_help)
+                return False
+            if not is_main_frame:
+                return True
+            if url.scheme() == "file":
+                path = url.toLocalFile()
+                if path.lower().endswith(('.md', '.markdown', '.mdown', '.mkd')):
+                    QTimer.singleShot(0, lambda p=path: self._viewer._load_file(p))
+                    return False
+                return True
+            if url.scheme() in ("http", "https", "mailto"):
+                QDesktopServices.openUrl(url)
                 return False
             return True
-        if url.scheme() in ("http", "https", "mailto"):
-            QDesktopServices.openUrl(url)
-            return False
-        return True
+
+    _external_link_page_cls = ExternalLinkPage
+    return _external_link_page_cls
 
 
 class MarkdownViewer(QMainWindow):
@@ -334,6 +377,9 @@ class MarkdownViewer(QMainWindow):
         self._dirty = False
         self.editor = None
         self._editor_suppress_change = False
+        # True, sobald der Nutzer den plantuml.jar-Download abgelehnt hat oder er
+        # fehlschlug - dann nicht bei jeder Datei mit Diagramm erneut fragen.
+        self._plantuml_download_declined = False
 
         # Lightweight welcome label (fast startup)
         self.welcome_label = QLabel(
@@ -407,14 +453,34 @@ class MarkdownViewer(QMainWindow):
     def _init_deferred(self):
         """Run heavy init after window is visible."""
         self._check_plantuml()
+        # Chromium erst nach dem ersten Zeichnen starten: der Warm-up kostet
+        # ~0,3 s (Prozess-Start + erster Load), das erste Dokument erscheint
+        # danach deutlich schneller. Der Stack bleibt auf dem Willkommens-Label.
+        QTimer.singleShot(250, self._warm_up_web_view)
+
+    def _warm_up_web_view(self):
+        """Startet die Web-Ansicht im Hintergrund mit einer leeren Seite."""
+        if self.web_view is not None:
+            return
+        self._ensure_web_view()
+        if self.web_view is not None:
+            self.web_view.setHtml(
+                "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
+                "<body></body></html>"
+            )
 
     def _ensure_web_view(self):
         """Lazily create QWebEngineView on first use."""
         if self.web_view is not None:
             return
 
+        # Erst hier importieren (siehe Kommentar oben): der Import zieht
+        # Qt6WebEngineCore.dll nach und kostet ~25 ms.
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
+        from PyQt6.QtWebEngineCore import QWebEngineSettings
+
         self.web_view = QWebEngineView()
-        self.web_view.setPage(ExternalLinkPage(self, self.web_view))
+        self.web_view.setPage(external_link_page_class()(self, self.web_view))
         # Zoom wirkt direkt auf die Ansicht – kein Neurendern nötig
         self.web_view.loadFinished.connect(self._on_page_loaded)
         page = self.web_view.page()
@@ -614,6 +680,9 @@ class MarkdownViewer(QMainWindow):
 
     def _search_prev(self):
         if self.web_view and self.search_input.text():
+            # QWebEnginePage kommt erst mit dem verzoegerten WebEngine-Import
+            # (siehe _ensure_web_view), deshalb hier lokal.
+            from PyQt6.QtWebEngineCore import QWebEnginePage
             self.web_view.findText(self.search_input.text(),
                                    QWebEnginePage.FindFlag.FindBackward)
 
@@ -741,12 +810,31 @@ class MarkdownViewer(QMainWindow):
             self._show_welcome()
 
     def _check_plantuml(self):
-        """Check if plantuml.jar is available and offer to download if not."""
-        jar_path = get_plantuml_jar_path()
-        if jar_path:
+        """Hinweis in der Statuszeile, wenn plantuml.jar fehlt.
+
+        Bewusst ohne Java-Test und ohne Dialog: check_java_available() startet
+        einen Subprozess (~150 ms) und der Download-Dialog ist modal - beides
+        wuerde den Start bremsen. Gefragt wird erst, wenn eine Datei tatsaechlich
+        ein PlantUML-Diagramm enthaelt (_ensure_plantuml_jar).
+        """
+        if get_plantuml_jar_path():
+            return
+        self.statusBar().showMessage(
+            "Hinweis: plantuml.jar fehlt – sie wird beim ersten Diagramm angeboten."
+        )
+
+    def _ensure_plantuml_jar(self):
+        """Bietet den plantuml.jar-Download an, wenn eine Datei PlantUML nutzt.
+
+        Laeuft erst beim Laden einer Datei mit ```plantuml-Fence und nur, solange
+        die JAR fehlt. Der Download blockiert den GUI-Thread (mit Fortschritt in
+        der Statuszeile), deshalb nicht beim Start.
+        """
+        if get_plantuml_jar_path() or self._plantuml_download_declined:
             return
 
         if not check_java_available():
+            self._plantuml_download_declined = True
             self.statusBar().showMessage(
                 "Hinweis: Java nicht gefunden – PlantUML-Diagramme werden nicht funktionieren."
             )
@@ -755,7 +843,8 @@ class MarkdownViewer(QMainWindow):
         reply = QMessageBox.question(
             self,
             "plantuml.jar fehlt",
-            "plantuml.jar wurde nicht gefunden.\n\n"
+            "Die Datei enthält ein PlantUML-Diagramm, aber plantuml.jar wurde "
+            "nicht gefunden.\n\n"
             f"Gesucht in:\n  {chr(10).join(str(d) for d in get_jar_search_dirs())}\n\n"
             "Möchten Sie es jetzt herunterladen?\n"
             "(Benötigt Internetverbindung)",
@@ -763,31 +852,36 @@ class MarkdownViewer(QMainWindow):
             QMessageBox.StandardButton.Yes
         )
 
-        if reply == QMessageBox.StandardButton.Yes:
-            self.statusBar().showMessage("Lade plantuml.jar herunter...")
-            _process_events()
+        if reply != QMessageBox.StandardButton.Yes:
+            self._plantuml_download_declined = True
+            return
 
-            def _progress(msg):
-                self.statusBar().showMessage(msg)
-                QApplication.processEvents()
+        self.statusBar().showMessage("Lade plantuml.jar herunter...")
+        _process_events()
 
-            success = download_plantuml_jar(progress_callback=_progress)
+        def _progress(msg):
+            self.statusBar().showMessage(msg)
+            QApplication.processEvents()
 
-            if success:
-                QMessageBox.information(
-                    self,
-                    "Erfolg",
-                    "plantuml.jar wurde erfolgreich heruntergeladen."
-                )
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Fehler",
-                    "plantuml.jar konnte nicht heruntergeladen werden.\n\n"
-                    "Bitte manuell von https://plantuml.com/de/download herunterladen und "
-                    "in eines dieser Verzeichnisse legen:\n"
-                    + "\n".join(f"  {d}" for d in get_jar_search_dirs())
-                )
+        success = download_plantuml_jar(progress_callback=_progress)
+
+        if success:
+            QMessageBox.information(
+                self,
+                "Erfolg",
+                "plantuml.jar wurde erfolgreich heruntergeladen."
+            )
+        else:
+            # Nicht erneut fragen: sonst poppt der Dialog bei jeder Datei auf.
+            self._plantuml_download_declined = True
+            QMessageBox.warning(
+                self,
+                "Fehler",
+                "plantuml.jar konnte nicht heruntergeladen werden.\n\n"
+                "Bitte manuell von https://plantuml.com/de/download herunterladen und "
+                "in eines dieser Verzeichnisse legen:\n"
+                + "\n".join(f"  {d}" for d in get_jar_search_dirs())
+            )
 
     def _open_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -815,6 +909,11 @@ class MarkdownViewer(QMainWindow):
 
             self._ensure_editor()
             self._set_editor_text(md_text)
+
+            # Download-Dialog nur bei Bedarf: erst wenn die Datei wirklich ein
+            # PlantUML-Diagramm enthaelt (spart Java-Subprozess und Dialog beim Start).
+            if _contains_plantuml_block(md_text):
+                self._ensure_plantuml_jar()
 
             self._render_md_content(md_text)
 
@@ -1075,7 +1174,72 @@ class MarkdownViewer(QMainWindow):
         return super().eventFilter(obj, event)
 
 
+def _close_splash():
+    """Schliesst den PyInstaller-Splash, falls vorhanden.
+
+    Im Quellmodus gibt es das Modul pyi_splash nicht (ImportError), im Frozen-Build
+    ohne --splash ebenfalls nicht. Der Splash darf den Start nie verhindern,
+    deshalb wird auch ein Fehler beim Schliessen geschluckt.
+    """
+    try:
+        import pyi_splash  # nur im PyInstaller-Build mit --splash vorhanden
+    except ImportError:
+        return
+    try:
+        pyi_splash.close()
+    except Exception:
+        pass
+
+
+def _bring_to_front(window):
+    """Holt das Hauptfenster in den Vordergrund.
+
+    Beim Start per Doppelklick haelt der Explorer den Fokus, und der Splash
+    (Tk-Fenster des Bootloaders, "always on top") gibt ihn beim Schliessen nicht
+    an Qt weiter. raise_() aendert nur die Z-Reihenfolge, activateWindow()
+    fordert den Fokus an.
+
+    Unter Windows genuegt das nicht: Der Vordergrund darf nur an einen Prozess
+    mit "Foreground-Recht" gehen, und das geht verloren, waehrend Splash und
+    Datei-Render laufen. Deshalb wird der Input-Thread des aktuellen
+    Vordergrundfensters kurz angehaengt (AttachThreadInput) und dann
+    SetForegroundWindow gerufen - Standardweg um die Sperre zu umgehen.
+    """
+    window.raise_()
+    window.activateWindow()
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        hwnd = int(window.winId())
+        vorne = user32.GetForegroundWindow()
+        if vorne == hwnd:
+            return
+        thread_vorne = user32.GetWindowThreadProcessId(vorne, None)
+        thread_self = kernel32.GetCurrentThreadId()
+        angehaengt = bool(thread_vorne) and thread_vorne != thread_self
+        if angehaengt:
+            user32.AttachThreadInput(thread_vorne, thread_self, True)
+        try:
+            user32.SetForegroundWindow(hwnd)
+            user32.BringWindowToTop(hwnd)
+        finally:
+            if angehaengt:
+                user32.AttachThreadInput(thread_vorne, thread_self, False)
+    except Exception:
+        # Fokus ist Komfort - er darf den Start nie verhindern.
+        pass
+
+
 def main():
+    # Muss VOR der QApplication gesetzt sein: PyQt6.QtWebEngineWidgets wird erst
+    # beim ersten Dokument importiert (siehe _ensure_web_view). Ohne diesen
+    # OpenGL-Sharing-Hinweis verweigert PyQt6 den spaeten Import.
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+
     app = QApplication(sys.argv)
     app.setApplicationName("md-dis")
     app.setApplicationVersion(VERSION)
@@ -1085,6 +1249,16 @@ def main():
 
     window = MarkdownViewer()
     window.show()
+    # Splash erst schliessen, wenn das Hauptfenster gezeichnet ist - sonst blitzt
+    # zwischen Splash und Fenster kurz der Desktop auf. processEvents() zeichnet
+    # sofort, statt auf den Event-Loop zu warten.
+    app.processEvents()
+    _close_splash()
+    # Fokus mehrfach anfordern: Beim Start per Doppelklick bleibt md-dis sonst
+    # hinter dem Explorer. Die Timer laufen erst mit app.exec() (also nach dem
+    # Datei-Rendern) - genau dann, wenn das Fenster wirklich fertig gezeichnet ist.
+    for verzoegerung in (0, 150, 500):
+        QTimer.singleShot(verzoegerung, lambda w=window: _bring_to_front(w))
 
     # Open file from command line
     if len(sys.argv) > 1:

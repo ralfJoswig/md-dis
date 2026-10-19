@@ -68,7 +68,9 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
 ### Diagramm-Unterstützung
 - **Mermaid**: Server-seitig via `mmdc` (mermaid-cli, npm install -g @mermaid-js/mermaid-cli)
 - **PlantUML**: Lokales Java + `plantuml.jar` (im gleichen Verzeichnis wie die .exe)
-  - Automatischer Download beim ersten Start, wenn Java vorhanden ist
+  - Download erst **bei Bedarf**: beim Laden einer Datei mit ` ```plantuml `-Fence,
+    wenn die JAR fehlt (nicht mehr beim Start – dort steht nur ein Hinweis in der
+    Statuszeile). Eine Ablehnung oder ein Fehlschlag wird für die Sitzung gemerkt.
   - Der Download ist atomar (`plantuml.jar.part` + `os.replace`); liefert die
     Release-Seite eine `plantuml.jar.sha256`, wird der Download zusätzlich gegen
     deren Prüfsumme verifiziert (sonst läuft er unverändert weiter).
@@ -144,6 +146,54 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
 - Anzeige per `setHtml` mit `baseUrl` auf dem Verzeichnis der Markdown-Datei,
   damit relative Bildpfade auflösen (vorher `setUrl` auf `preview/`, wodurch
   Bilder aus dem Dokumentverzeichnis fehlten)
+
+## Startzeit
+
+Messwerte (Frozen-Build, lokal, 3–4 Läufe; vor der Überarbeitung 777/904/1085 ms bis
+zum Fenster):
+
+| Pfad | Vorher | Nachher |
+|---|---|---|
+| GUI: erstes sichtbares Fenster (Splash) | – | **58–149 ms** |
+| GUI: Hauptfenster | 777–1085 ms | **649–688 ms** |
+| Server: Banner | 492–763 ms | **155–159 ms** (warm) |
+| Server: erster Request (400 ms nach Banner) | 287–320 ms | **207–233 ms** |
+| Bundle-Größe | 442,4 MB / 1035 Dateien | **381,4 MB / 1009 Dateien** |
+
+Maßnahmen und ihre Begründung:
+
+- **Importe verzögern** (`md_render.py`): `hashlib`/`urllib.request` liegen hinter dem
+  Frühabbruch „JAR vorhanden", die Mermaid-Hilfen im Mermaid-Zweig. Der Normalfall
+  (JAR vorhanden) zahlt nichts. `import md_dis` spart dadurch ~40–58 ms.
+- **QtWebEngine erst beim ersten Dokument** (`md_dis.py`): Der Import kostet ~26 ms und
+  zieht `Qt6WebEngineCore.dll` nach. Bedingungen, beide dokumentiert im Modulkopf:
+  `Qt.ApplicationAttribute.AA_ShareOpenGLContexts` muss **vor** der `QApplication`
+  gesetzt sein, und die `QApplication` braucht ein nicht-leeres `argv` (Chromium baut
+  daraus seine Kommandozeile; `QApplication([])` stürzt beim späten Start mit
+  `0xC0000409` ab). Die Seitenklasse `ExternalLinkPage` entsteht deshalb über die
+  gecachte Fabrik `external_link_page_class()`.
+- **Splash** (`build.py` + `_close_splash()`): PyInstaller-Tk-Splash nach ~60 ms;
+  geschlossen wird erst nach `show()` + `processEvents()`, damit das Hauptfenster
+  bereits gezeichnet ist. Nur die GUI, nicht der Server. Tcl/Tk kostet ~3,4 MB.
+- **Fokus** (`_bring_to_front`): Der Splash hält den Vordergrund und Windows gibt
+  ihn beim Schließen nicht an md-dis weiter – der Doppelklick-Start blieb hinter
+  dem Explorer. Deshalb `raise_()` + `activateWindow()` plus (Windows)
+  `AttachThreadInput` auf den Vordergrund-Thread + `SetForegroundWindow`, dreimal
+  per `QTimer.singleShot(0/150/500)` nach dem Event-Loop-Start.
+- **Chromium vorwärmen**: 250 ms nach `show()` wird die Ansicht angelegt und eine
+  leere Seite geladen. Der Stack bleibt auf dem Willkommens-Label, die PDF-Action
+  bleibt ohne Datei deaktiviert. Das erste Dokument ist dadurch ~0,3 s schneller.
+- **PlantUML-Prüfung ohne Startkosten**: kein `java -version` (~148 ms) und kein
+  modaler Dialog beim Start, nur ein Statuszeilen-Hinweis. Der Dialog kommt beim
+  ersten Dokument mit ` ```plantuml `-Fence (Vorfilter `_contains_plantuml_block`).
+- **Bundle**: `numpy`, `PIL`, `psutil`, `setuptools`, `charset_normalizer`, `olefile`
+  und `defusedxml` sind ausgeschlossen (nur über die Analyse-Kette
+  `codehilite → pygments.formatters.img → PIL` hereingekommen, zur Laufzeit nie
+  importiert). `--noupx` ist explizit: UPX würde die 195-MB-WebEngine-DLL packen und
+  den Start durch Entpacken verlangsamen.
+- **Server**: Daemon-Thread `render-warmup` rendert nach dem Binden ein
+  Mini-Dokument mit Codeblock, damit Markdown-/Pygments-Importe und Caches beim
+  ersten Request bereit sind.
 
 ## Projektstruktur
 

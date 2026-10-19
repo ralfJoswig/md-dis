@@ -7,16 +7,16 @@ A Markdown viewer for Windows with diagram support, available in **two variants*
 | File | `md_dis.py` (PyQt6 GUI) | `md_dis_server.py` (headless) |
 | Interaction | Local window | Browser (index, raw, live view, upload) |
 | Use case | Interactive viewing / editing workflow | Remote reading, sharing, CI, Watch |
-| Current build | `dist/md-dis/` — 1.4.5 | `dist/md-dis-server/` — 1.4.6 |
+| Current build | `dist/md-dis/` — 1.4.11 | `dist/md-dis-server/` — 1.4.8 |
 
 Both share a single **Qt-free render core** (`md_render.py`) — same output in GUI and server.
 
-**Status 2026-10-18:** the source is at **1.4.6**, and both frozen builds are current:
-`dist/md-dis/` (**1.4.5**) and `dist/md-dis-server/` (**1.4.6**) include the `![[…]]`
+**Status 2026-10-19:** the source is at **1.4.11**, and both frozen builds are current:
+`dist/md-dis/` (**1.4.11**) and `dist/md-dis-server/` (**1.4.8**) include the `![[…]]`
 embed, the `strip_frontmatter` fix, the TOC feature, the frontmatter fix, the
 **wiki links** (`[[…]]`), the optional **SHA256** check for the JAR download and the
 **LRU server cache**, plus the review follow-up (CSP `img-src 'self' data:`, 10 MB
-document limit, directory URLs → 404).
+document limit, directory URLs → 404) and the **startup overhaul** (see below).
 
 ---
 
@@ -24,7 +24,7 @@ document limit, directory URLs → 404).
 
 - GitHub-Flavored Markdown (tables, code blocks, strikethrough, lists)
 - **Diagram rendering inside Markdown:**
-  - **PlantUML** — via `plantuml.jar` (Java). The JAR is downloaded automatically on first use. Search order: `$MD_DIS_PLANTUML_JAR` → directory of the executable/script → `%LOCALAPPDATA%\md-dis`. The download goes to the executable directory if writable, otherwise to the user cache; if the release provides a `.sha256` checksum, the download is verified against it.
+  - **PlantUML** — via `plantuml.jar` (Java). The JAR is downloaded on demand: when the first document containing a ` ```plantuml ` block is opened (and only if Java is present). Search order: `$MD_DIS_PLANTUML_JAR` → directory of the executable/script → `%LOCALAPPDATA%\md-dis`. The download goes to the executable directory if writable, otherwise to the user cache; if the release provides a `.sha256` checksum, the download is verified against it.
   - **Mermaid** — via `mmdc` (mermaid-cli), if installed
 - Dark / light theme toggle
 - Zoom (`Ctrl+` / `Ctrl-` / `Ctrl+0`, mouse wheel)
@@ -35,6 +35,9 @@ document limit, directory URLs → 404).
 - File Watch with auto-reload (`F5`)
 - German UI; yaml frontmatter rendered as an info box
 - Headless HTTP server also supports **browser upload** of `.md` files
+- **Fast startup** — splash screen after ~60 ms, window in ~0.65 s: QtWebEngine and
+  the PlantUML check are deferred, the browser engine is pre-warmed after the window
+  is shown, and the frozen bundle ships without numpy/PIL/setuptools (~61 MB smaller)
 
 ## Requirements
 
@@ -177,7 +180,7 @@ Note: the frozen executables must be run from a **local** Windows path
 
 ```python
 # md_render.py
-VERSION = "1.4.6"
+VERSION = "1.4.11"
 ```
 
 Both variants import `VERSION` from the render core, so a frozen executable
@@ -219,13 +222,15 @@ dist/md-dis-server/md-dis-server.exe --port 8080
 ```
 
 The source version moves ahead of the frozen builds, so a binary reports the
-version it was frozen with, not the current one. `dist/md-dis/` prints 1.4.5 and
-`dist/md-dis-server/` 1.4.6 while the source is at 1.4.6.
+version it was frozen with, not the current one. `dist/md-dis/` prints 1.4.11 and
+`dist/md-dis-server/` 1.4.8 while the source is at 1.4.11.
 
 ### Changelog
 
 | Version | Date | Changes |
 |---|---|---|
+| **1.4.11** | 2026-10-19 | Fixed window focus after startup: when a `.md` file was opened by double-click, the main window stayed behind the Explorer (the splash held the foreground and Windows did not hand it over). The window is now raised and activated, and on Windows the foreground is claimed via `AttachThreadInput` + `SetForegroundWindow` (needed because Windows only gives the foreground to a process holding the "foreground right"). Verified 10/10 runs (with and without a file, incl. PlantUML/Mermaid documents). Builds 1.4.9/1.4.10 were intermediate attempts and are superseded by 1.4.11. |
+| **1.4.7** | 2026-10-19 | Faster startup (desktop app). Splash screen after ~60 ms, main window in ~0.65 s (was 0.78–1.09 s). `PyQt6.QtWebEngineWidgets` and the PlantUML check are no longer imported/checked at startup; the download dialog appears only for documents that actually contain a PlantUML block (and is not repeated after a decline). Chromium is pre-warmed 250 ms after the window is shown. The bundle drops numpy/PIL/psutil/setuptools (~61 MB smaller) and no longer uses UPX. The server (1.4.8) pre-warms the render core in a daemon thread: first request ~70–90 ms faster. |
 | **1.4.3** | 2026-10-15 | Fixed the frontmatter info box: YAML block scalars (`key: >` folded, `key: \|` literal, incl. chomping/indentation indicators) are now resolved to their full text instead of showing only the `>`/`\|` indicator. Multi-line plain scalars and lists under a key are rendered as well. |
 | **1.4.0** | 2026-10-12 | Auto table of contents: a sticky sidebar built from the headings h1–h3, clickable without JavaScript. Toggle in the desktop app (`Ctrl+T`, persisted in `md-dis.ini`) and in the server (`--no-toc`, plus a `?toc=0/1` link in the toolbar). Off screen it is hidden in the PDF export. |
 | **1.3.0** | 2026-09-29 | Image embed `![[grafik.png]]` with optional `\|Alt-Text`, for `.png/.jpg/.jpeg/.gif/.svg/.webp`, in desktop app and server. Fixed `strip_frontmatter`, which unwrapped *any* document starting with a bare ` ``` ` fence and glued the following line onto the code (`code# Titel`). |

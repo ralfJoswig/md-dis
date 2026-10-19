@@ -551,6 +551,20 @@ def _inject_watch(html: str, rel: str) -> str:
     return html.replace("</body>", script + "</body>", 1)
 
 
+def _warm_up_render():
+    """Rendert einmal ein Mini-Dokument, damit der erste Request schnell ist.
+
+    Markdown-Extensions, Pygments-Lexer und Formatter werden erst beim ersten
+    Rendern importiert/initialisiert (gemessen ~90 ms, mit Codeblock mehr).
+    Laeuft als Daemon-Thread, damit der Start nie daran scheitert.
+    """
+    try:
+        markdown_to_html("# md-dis\n\n```python\nprint(1)\n```\n", False, toc=False)
+    except Exception:
+        # Warm-up ist reine Beschleunigung - Fehler duerfen den Server nicht stoeren.
+        pass
+
+
 def main(argv=None):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
@@ -614,6 +628,11 @@ def main(argv=None):
         allowed_hosts=({f"localhost:{actual_port}", f"127.0.0.1:{actual_port}", f"[::1]:{actual_port}"}
                        if args.host in ("127.0.0.1", "localhost", "::1") else None),
     )
+
+    # Render-Kern im Hintergrund vorwaermen, bevor der erste Request kommt.
+    # Der Thread startet vor dem Banner: die paar Millisekunden Vorsprung
+    # reichen, damit Importe und Caches beim ersten Seitenaufruf bereit sind.
+    threading.Thread(target=_warm_up_render, name="render-warmup", daemon=True).start()
 
     print(f"md-dis-server v{VERSION} – http://{args.host}:{actual_port}")
     print(f"  Wurzel: {root}")
