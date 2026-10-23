@@ -103,7 +103,15 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
 - Scrollbar
 - Zoombar (Ctrl+/- oder Mausrad)
 - Farbschema: Hell/Dunkel Toggle
-- Farbschema und Zoom werden in `md-dis.ini` neben der .exe gespeichert
+- Farbschema, Zoom, Inhaltsverzeichnis-Zustand sowie Fensterposition und -größe
+  (inkl. maximiertem Fenster) werden in `md-dis.ini` neben der .exe gespeichert.
+  Passt die gespeicherte Position nicht mehr zum Bildschirmaufbau, startet das
+  Fenster stattdessen zentriert in Standardgröße.
+- Mehrbildschirm: Der Monitor wird als `window/screen` (Name, z. B.
+  `\\.\DISPLAY2`) plus `window/screenRect` (Fläche als Ersatz) gemerkt und beim
+  Start wiedergefunden. Steht das Fenster danach nicht auf diesem Monitor,
+  schiebt `_move_into_screen` es in dessen nutzbare Fläche (und verkleinert es,
+  falls nötig). Fehlt der Monitor, bleibt die wiederhergestellte Position.
 
 #### Inhaltsverzeichnis (Sidebar)
 - Automatisch aus den Überschriften **h1–h3** erzeugt; die toc-Extension von

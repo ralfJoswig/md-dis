@@ -124,9 +124,14 @@ dark theme, and reproduces relative image paths, PlantUML/Mermaid diagrams and
 tables. The on-screen zoom is not applied — the PDF is always laid out at
 100 %.
 
-**Settings.** Theme, zoom and the PDF options are stored in `md-dis.ini` next
-to the executable, so they travel with a portable copy. If that directory is
-not writable, the settings are kept in memory for the session only.
+**Settings.** Theme, zoom, the table-of-contents state, window position/size
+(including a maximised window) and the PDF options are stored in `md-dis.ini`
+next to the executable, so they travel with a portable copy. If that directory
+is not writable, the settings are kept in memory for the session only. The
+window is also remembered per monitor (`window/screen` plus the monitor's
+rectangle as a fallback), so it reappears on the same display even if the
+monitor layout changed. A stored position that no longer fits the current
+monitor layout is discarded and the window is centred instead.
 
 ### HTTP server (`md-dis-server`)
 
@@ -222,13 +227,15 @@ dist/md-dis-server/md-dis-server.exe --port 8080
 ```
 
 The source version moves ahead of the frozen builds, so a binary reports the
-version it was frozen with, not the current one. `dist/md-dis/` prints 1.4.11 and
-`dist/md-dis-server/` 1.4.8 while the source is at 1.4.11.
+version it was frozen with, not the current one. `dist/md-dis/` prints 1.4.14 and
+`dist/md-dis-server/` 1.4.15 while the source is at 1.4.15.
 
 ### Changelog
 
 | Version | Date | Changes |
 |---|---|---|
+| **1.4.14** | 2026-10-23 | Multi-monitor support for the saved window state: the monitor is stored by name (`window/screen`) together with its rectangle (`window/screenRect`) and restored on the next start, so the window returns to the same display even when the monitor arrangement changed. If the monitor is gone, the window stays at its restored position; if it no longer exists at all, the visibility check centres the window. |
+| **1.4.12** | 2026-10-23 | The desktop app remembers its window position and size: they are stored as `window/geometry` in `md-dis.ini` and restored on the next start (including a maximised window). A stored position that no longer fits the monitor layout is discarded and the window starts centred at 1100×800 instead, so it can never reappear off-screen. |
 | **1.4.11** | 2026-10-19 | Fixed window focus after startup: when a `.md` file was opened by double-click, the main window stayed behind the Explorer (the splash held the foreground and Windows did not hand it over). The window is now raised and activated, and on Windows the foreground is claimed via `AttachThreadInput` + `SetForegroundWindow` (needed because Windows only gives the foreground to a process holding the "foreground right"). Verified 10/10 runs (with and without a file, incl. PlantUML/Mermaid documents). Builds 1.4.9/1.4.10 were intermediate attempts and are superseded by 1.4.11. |
 | **1.4.7** | 2026-10-19 | Faster startup (desktop app). Splash screen after ~60 ms, main window in ~0.65 s (was 0.78–1.09 s). `PyQt6.QtWebEngineWidgets` and the PlantUML check are no longer imported/checked at startup; the download dialog appears only for documents that actually contain a PlantUML block (and is not repeated after a decline). Chromium is pre-warmed 250 ms after the window is shown. The bundle drops numpy/PIL/psutil/setuptools (~61 MB smaller) and no longer uses UPX. The server (1.4.8) pre-warms the render core in a daemon thread: first request ~70–90 ms faster. |
 | **1.4.3** | 2026-10-15 | Fixed the frontmatter info box: YAML block scalars (`key: >` folded, `key: \|` literal, incl. chomping/indentation indicators) are now resolved to their full text instead of showing only the `>`/`\|` indicator. Multi-line plain scalars and lists under a key are rendered as well. |

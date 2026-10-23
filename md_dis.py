@@ -12,7 +12,7 @@ from md_render import (
 )
 
 from PyQt6.QtCore import (
-    Qt, QUrl, QEvent, QEventLoop, QTimer, QSettings,
+    Qt, QUrl, QEvent, QEventLoop, QTimer, QSettings, QByteArray, QPoint, QRect,
     QMarginsF,
 )
 from PyQt6.QtGui import (
@@ -191,6 +191,17 @@ PDF_PAGE_SIZES = ["A4", "A3", "A5", "Letter", "Legal", "Executive", "Tabloid"]
 # letzten Millimeter nicht bedrucken.
 PDF_MARGIN_PRESETS = [("Schmal", 10), ("Normal", 15), ("Weit", 25)]
 
+# Fensterzustand (Position, Groesse, maximiert) als QByteArray von
+# QWidget.saveGeometry(). Fehlt der Eintrag, startet die App mit DEFAULT_WINDOW_SIZE.
+GEOMETRY_KEY = "window/geometry"
+# Bildschirm, auf dem das Fenster zuletzt stand. Der Name (unter Windows z. B.
+# "\\.\DISPLAY2") ueberlebt einen geaenderten Monitoraufbau besser als die
+# absoluten Koordinaten; die gemerkte Bildschirmflaeche dient als Ersatz, wenn
+# der Name nicht mehr existiert (anderer Anschluss, neuer Treibername).
+SCREEN_KEY = "window/screen"
+SCREEN_RECT_KEY = "window/screenRect"
+DEFAULT_WINDOW_SIZE = (1100, 800)
+
 
 def app_dir() -> str:
     """Verzeichnis, in dem die App ihre Laufzeitdateien ablegt."""
@@ -365,6 +376,11 @@ class MarkdownViewer(QMainWindow):
         self.pdf_landscape = self.settings.value("pdf/landscape", False, type=bool)
         self.pdf_margin = self.settings.value("pdf/marginPreset", "Normal", type=str)
         self.show_toc = self.settings.value("appearance/showToc", True, type=bool)
+        # True, solange das Fenster noch exakt zentriert werden muss (siehe
+        # _center_window/showEvent).
+        self._center_on_show = False
+        # Position/Groesse des letzten Laufs wiederherstellen (vor show()).
+        self._restore_geometry()
 
         self.current_file = None
         self.web_view = None
@@ -432,6 +448,130 @@ class MarkdownViewer(QMainWindow):
             return 1.0
         return max(0.5, min(value, 3.0))
 
+    def _restore_geometry(self):
+        """Fensterposition und -groesse aus der INI uebernehmen.
+
+        saveGeometry()/restoreGeometry() tragen auch den maximierten Zustand mit.
+        Passt der gespeicherte Platz nicht mehr zum aktuellen Bildschirmaufbau
+        (Monitor entfernt, andere Aufloesung), wird stattdessen die
+        Standardgroesse mittig gesetzt - sonst bliebe das Fenster unsichtbar.
+        """
+        gespeichert = self.settings.value(GEOMETRY_KEY)
+        if isinstance(gespeichert, QByteArray) and not gespeichert.isEmpty():
+            if self.restoreGeometry(gespeichert) and self._geometry_on_screen():
+                self._restore_screen()
+                return
+        self._center_window(*DEFAULT_WINDOW_SIZE)
+
+    def _geometry_on_screen(self) -> bool:
+        """True, wenn das Fenster greifbar auf einem Bildschirm liegt."""
+        fenster = self.frameGeometry()
+        for screen in QApplication.screens():
+            treffer = screen.availableGeometry().intersected(fenster)
+            # Ein schmaler Rest genuegt nicht: die Titelleiste muss bedienbar sein.
+            if treffer.width() >= 120 and treffer.height() >= 40:
+                return True
+        return False
+
+    def _restore_screen(self):
+        """Fenster auf den Bildschirm holen, auf dem es zuletzt stand.
+
+        restoreGeometry() stellt nur absolute Koordinaten wieder her. Aendert
+        sich der Monitoraufbau (Bildschirm abgezogen, umgesteckt, andere
+        Anordnung), liegt das Fenster danach zwar sichtbar, aber auf dem
+        falschen Bildschirm. Deshalb wird zusaetzlich der gemerkte Monitor
+        gesucht und das Fenster dorthin geschoben.
+        """
+        name = self.settings.value(SCREEN_KEY, "")
+        if not isinstance(name, str):
+            name = ""
+        # Ohne type=QRect lesen: bei einem handgeschriebenen String wirft die
+        # Konvertierung einen TypeError.
+        gemerkt = self.settings.value(SCREEN_RECT_KEY)
+        if not isinstance(gemerkt, QRect) or not gemerkt.isValid():
+            gemerkt = None
+        ziel = self._find_screen(name, gemerkt)
+        if ziel is None:
+            return
+        if ziel.availableGeometry().contains(self.frameGeometry().center()):
+            return
+        self._move_into_screen(ziel)
+
+    @staticmethod
+    def _find_screen(name, rect=None, screens=None):
+        """Bildschirm per Name, ersatzweise per gemerkter Flaeche finden.
+
+        Der Name ist stabiler als der Index, die Flaeche hilft, wenn der
+        Treiber den Namen geaendert hat, der Aufbau aber gleich geblieben ist.
+        """
+        screens = QApplication.screens() if screens is None else screens
+        if name:
+            for screen in screens:
+                if screen.name() == name:
+                    return screen
+        if rect is not None:
+            for screen in screens:
+                if screen.geometry() == rect:
+                    return screen
+        return None
+
+    def _move_into_screen(self, screen):
+        """Fenster vollstaendig in die nutzbare Flaeche eines Bildschirms schieben."""
+        verfuegbar = screen.availableGeometry()
+        rahmen = self.frameGeometry()
+        breite = min(rahmen.width(), verfuegbar.width())
+        hoehe = min(rahmen.height(), verfuegbar.height())
+        if (breite, hoehe) != (rahmen.width(), rahmen.height()):
+            self.resize(breite, hoehe)
+        self.move(
+            max(verfuegbar.left(), min(rahmen.left(), verfuegbar.right() - breite + 1)),
+            max(verfuegbar.top(), min(rahmen.top(), verfuegbar.bottom() - hoehe + 1)),
+        )
+
+    def _center_window(self, breite: int, hoehe: int):
+        """Fenster auf die Standardgroesse bringen und auf dem Hauptschirm zentrieren."""
+        # Ein wiederhergestelltes, aber unsichtbares Fenster kann maximiert sein -
+        # vor dem Zentrieren zurueck in den Normalzustand.
+        self.setWindowState(Qt.WindowState.WindowNoState)
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            self.resize(breite, hoehe)
+            return
+        verfuegbar = screen.availableGeometry()
+        breite = min(breite, verfuegbar.width())
+        hoehe = min(hoehe, verfuegbar.height())
+        self.resize(breite, hoehe)
+        self.move(
+            verfuegbar.center().x() - breite // 2,
+            verfuegbar.center().y() - hoehe // 2,
+        )
+        if self.isVisible():
+            self._center_frame()
+        else:
+            # Vor dem Anzeigen kennt Qt die Fensterrahmen noch nicht, das Fenster
+            # saesse also um die halbe Titelzeile zu tief. showEvent justiert nach.
+            self._center_on_show = True
+
+    def _center_frame(self):
+        """Fenster am Rahmen (inkl. Titelzeile) exakt auf dem Hauptschirm zentrieren."""
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        rahmen = self.frameGeometry()
+        # move() setzt bei Top-Level-Fenstern die Rahmenecke, nicht die
+        # Zeichenflaeche - deshalb direkt mit der Rahmengroesse rechnen.
+        self.move(
+            screen.availableGeometry().center()
+            - QPoint(rahmen.width() // 2, rahmen.height() // 2)
+        )
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._center_on_show:
+            return
+        self._center_on_show = False
+        self._center_frame()
+
     def _save_settings(self):
         """Einstellungen in die INI schreiben; bei fehlender Rechte still."""
         if not self._settings_persist:
@@ -442,6 +582,16 @@ class MarkdownViewer(QMainWindow):
         self.settings.setValue("pdf/landscape", self.pdf_landscape)
         self.settings.setValue("pdf/marginPreset", self.pdf_margin)
         self.settings.setValue("appearance/showToc", self.show_toc)
+        # Fensterzustand bei jedem Speichern mitfuehren - beim Schliessen ist das
+        # der letzte Stand, ein Theme-/Zoom-Wechsel aktualisiert ihn nebenbei.
+        self.settings.setValue(GEOMETRY_KEY, self.saveGeometry())
+        # Bildschirm zusaetzlich namentlich merken: die Koordinaten im
+        # Geometrie-Blob verlieren ihre Aussage, sobald der Monitoraufbau
+        # wechselt, der Name bleibt meist gleich.
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            self.settings.setValue(SCREEN_KEY, screen.name())
+            self.settings.setValue(SCREEN_RECT_KEY, screen.geometry())
         self.settings.sync()
         if self.settings.status() == QSettings.Status.AccessError:
             # z. B. read-only installiert – ab jetzt nur noch im Speicher
