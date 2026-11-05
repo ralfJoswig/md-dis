@@ -24,8 +24,9 @@ md-dis.ini
 # Virtuelle Umgebung
 .venv/
 
-# Lokales Startskript
+# Lokale Startskripte
 start.cmd
+md-dis.bat
 
 # openwiki
 openwiki/
