@@ -32,7 +32,10 @@ from md_render import VERSION, markdown_to_html
 CONFIG = {}  # wird in main() gefüllt
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-       "img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'")
+       # img.shields.io ist gezielt fuer Badges erlaubt (z. B. ![Python 3.12+](...));
+       # alle anderen Fremdbilder bleiben blockiert.
+       "img-src 'self' data: https://img.shields.io; "
+       "object-src 'none'; base-uri 'none'; form-action 'self'")
 
 WATCH_JS = """(function() {
   var path = document.currentScript.dataset.path;

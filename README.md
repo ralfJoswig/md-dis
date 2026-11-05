@@ -7,16 +7,17 @@ A Markdown viewer for Windows with diagram support, available in **two variants*
 | File | `md_dis.py` (PyQt6 GUI) | `md_dis_server.py` (headless) |
 | Interaction | Local window | Browser (index, raw, live view, upload) |
 | Use case | Interactive viewing / editing workflow | Remote reading, sharing, CI, Watch |
-| Current build | `dist/md-dis/` — 1.4.11 | `dist/md-dis-server/` — 1.4.8 |
+| Current build | `dist/md-dis/` — 1.4.16 | `dist/md-dis-server/` — 1.4.17 |
 
 Both share a single **Qt-free render core** (`md_render.py`) — same output in GUI and server.
 
-**Status 2026-10-19:** the source is at **1.4.11**, and both frozen builds are current:
-`dist/md-dis/` (**1.4.11**) and `dist/md-dis-server/` (**1.4.8**) include the `![[…]]`
-embed, the `strip_frontmatter` fix, the TOC feature, the frontmatter fix, the
-**wiki links** (`[[…]]`), the optional **SHA256** check for the JAR download and the
-**LRU server cache**, plus the review follow-up (CSP `img-src 'self' data:`, 10 MB
-document limit, directory URLs → 404) and the **startup overhaul** (see below).
+**Status 2026-11-05:** the source is at **1.4.17**, and both frozen builds are
+current: `dist/md-dis/` (**1.4.16**) and `dist/md-dis-server/` (**1.4.17**)
+include the **shields.io badge** support. Both variants also include the
+`![[…]]` embed, the `strip_frontmatter` fix, the TOC feature, the frontmatter
+fix, the **wiki links** (`[[…]]`), the optional **SHA256** check for the JAR
+download, the **LRU server cache**, the review follow-up (10 MB document limit,
+directory URLs → 404) and the **startup overhaul** (see below).
 
 ---
 
@@ -29,6 +30,7 @@ document limit, directory URLs → 404) and the **startup overhaul** (see below)
 - Dark / light theme toggle
 - Zoom (`Ctrl+` / `Ctrl-` / `Ctrl+0`, mouse wheel)
 - **Image embed** — `![[pfad/grafik.png]]`, optionally `![[grafik.png|Alt-Text]]`
+- **shields.io badges** — external badges such as `![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)` are loaded in the desktop app and in the server; every other remote image stays blocked in both
 - **Wiki links** — `[[datei.md]]`, `[[datei.md#Abschnitt]]`, optionally `[[datei.md|Alias]]`
 - **Table of contents** — a sticky sidebar generated from the headings (h1–h3), toggleable
 - **PDF export** (`Ctrl+P`) with page format, orientation and margin
@@ -163,8 +165,10 @@ Endpoints:
 | `GET /upload` / `POST /upload` | Browser upload of `.md` files (stored under `<root>/uploads/`, max 10 MB) |
 
 Responses carry a strict `Content-Security-Policy`: scripts only from the
-server (`/watch.js`), images only same-origin or `data:` — remote images inside
-a document are not loaded. Markdown files larger than 10 MB are refused with
+server (`/watch.js`), images only same-origin, `data:` or **shields.io** —
+so badges such as `![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)`
+are displayed, while every other remote image inside a document is not loaded.
+Markdown files larger than 10 MB are refused with
 `413`; a file with broken UTF-8 is still rendered (invalid bytes are replaced
 instead of failing).
 
@@ -227,13 +231,14 @@ dist/md-dis-server/md-dis-server.exe --port 8080
 ```
 
 The source version moves ahead of the frozen builds, so a binary reports the
-version it was frozen with, not the current one. `dist/md-dis/` prints 1.4.14 and
-`dist/md-dis-server/` 1.4.15 while the source is at 1.4.15.
+version it was frozen with, not the current one. `dist/md-dis/` prints 1.4.16 and
+`dist/md-dis-server/` 1.4.17 while the source is at 1.4.17.
 
 ### Changelog
 
 | Version | Date | Changes |
 |---|---|---|
+| **1.4.16** | 2026-11-05 | shields.io badges: the desktop app enables remote images for the `file://` preview (`LocalContentCanAccessRemoteUrls`) and restricts them with a `QWebEngineUrlRequestInterceptor` (`RemoteImageGuard`) to `img.shields.io`; the server CSP allows `https://img.shields.io` too. All other remote images stay blocked. |
 | **1.4.14** | 2026-10-23 | Multi-monitor support for the saved window state: the monitor is stored by name (`window/screen`) together with its rectangle (`window/screenRect`) and restored on the next start, so the window returns to the same display even when the monitor arrangement changed. If the monitor is gone, the window stays at its restored position; if it no longer exists at all, the visibility check centres the window. |
 | **1.4.12** | 2026-10-23 | The desktop app remembers its window position and size: they are stored as `window/geometry` in `md-dis.ini` and restored on the next start (including a maximised window). A stored position that no longer fits the monitor layout is discarded and the window starts centred at 1100×800 instead, so it can never reappear off-screen. |
 | **1.4.11** | 2026-10-19 | Fixed window focus after startup: when a `.md` file was opened by double-click, the main window stayed behind the Explorer (the splash held the foreground and Windows did not hand it over). The window is now raised and activated, and on Windows the foreground is claimed via `AttachThreadInput` + `SetForegroundWindow` (needed because Windows only gives the foreground to a process holding the "foreground right"). Verified 10/10 runs (with and without a file, incl. PlantUML/Mermaid documents). Builds 1.4.9/1.4.10 were intermediate attempts and are superseded by 1.4.11. |

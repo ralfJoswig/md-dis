@@ -299,6 +299,47 @@ class PdfOptionsDialog(QDialog):
         return pdf_page_layout(page_size, landscape, margin_mm)
 
 
+_remote_image_guard_cls = None
+
+
+def remote_image_guard_class():
+    """Liefert die Interceptor-Klasse; definiert sie beim ersten Aufruf.
+
+    Wie bei ``external_link_page_class`` steht die Klassendefinition in einer
+    Funktion, weil QWebEngineUrlRequestInterceptor erst mit dem verzoegerten
+    WebEngine-Import verfuegbar ist.
+    """
+    global _remote_image_guard_cls
+    if _remote_image_guard_cls is not None:
+        return _remote_image_guard_cls
+
+    from PyQt6.QtWebEngineCore import (
+        QWebEngineUrlRequestInfo, QWebEngineUrlRequestInterceptor,
+    )
+
+    class RemoteImageGuard(QWebEngineUrlRequestInterceptor):
+        """Laesst entfernte Bilder nur von shields.io durch (Badges).
+
+        Der Desktop-Client laedt die Vorschau per setHtml mit file://-Basis.
+        Sobald LocalContentCanAccessRemoteUrls aktiv ist, wuerde Chromium jedes
+        entfernte Bild laden - auch aus einer fremden .md-Datei. Der Server
+        erlaubt per CSP gezielt nur img.shields.io; dieser Filter haelt die
+        Desktop-Vorschau auf demselben Stand.
+        """
+
+        ALLOWED_HOSTS = frozenset({"img.shields.io"})
+
+        def interceptRequest(self, info):
+            if info.resourceType() != QWebEngineUrlRequestInfo.ResourceType.ResourceTypeImage:
+                return
+            url = info.requestUrl()
+            if url.scheme() in ("http", "https") and url.host() not in self.ALLOWED_HOSTS:
+                info.block(True)
+
+    _remote_image_guard_cls = RemoteImageGuard
+    return _remote_image_guard_cls
+
+
 _external_link_page_cls = None
 
 
@@ -639,6 +680,17 @@ class MarkdownViewer(QMainWindow):
         # Kein JS nötig (Diagramme kommen als fertiges SVG) – verhindert, dass
         # Skripte aus fremden .md-Dateien lokale Dateien lesen und ausleiten
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, False)
+        # Die Vorschau wird per setHtml mit file://-Basis geladen; Chromium
+        # blockiert solche Seiten sonst beim Laden entfernter Bilder. Ohne diese
+        # Freigabe blieben Badges (![…](https://img.shields.io/…)) als kaputtes
+        # Bild mit Alt-Text stehen. Welche entfernten Bilder tatsaechlich laden
+        # duerfen, begrenzt der Interceptor unten auf shields.io.
+        settings.setAttribute(
+            QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
+        )
+        # Referenz halten: der Interceptor muss den Aufbau der Seite ueberleben.
+        self._remote_image_guard = remote_image_guard_class()(self)
+        page.profile().setUrlRequestInterceptor(self._remote_image_guard)
 
         self.stack.addWidget(self.web_view)
 

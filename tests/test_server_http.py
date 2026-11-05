@@ -1,7 +1,7 @@
 """HTTP-Integrationstests für ``md_dis_server.py``.
 
 Startet einen echten ``MDDisServer`` auf Port 0 im Hintergrund-Thread und prüft
-die in den Reviews genannten Punkte: CSP ohne Fremdbilder (N6), Größenlimit und
+die in den Reviews genannten Punkte: CSP mit shields.io-Ausnahme (N6), Größenlimit und
 robustes Dekodieren (M5), BOM-Toleranz (N9) sowie den Host-Schutz.
 """
 
@@ -74,10 +74,14 @@ def test_doc_route_renders_markdown(server):
     assert b"<h1" in body
 
 
-def test_csp_disallows_remote_images(server):
+def test_csp_allows_shields_badges_but_no_other_remote_images(server):
     _, _, headers = _get(server + "/")
     csp = headers.get("Content-Security-Policy", "")
-    assert "img-src 'self' data:" in csp
+    img_src = next(part.strip() for part in csp.split(";") if part.strip().startswith("img-src"))
+    assert img_src == "img-src 'self' data: https://img.shields.io"
+    # Kein pauschales https: - fremde Hosts bleiben ausgeschlossen.
+    assert " https: " not in img_src + " "
+    assert "img.shields.io" in img_src
 
 
 def test_foreign_host_is_rejected(server):

@@ -48,6 +48,17 @@ Desktop-Anwendung zur Anzeige von Markdown-Dateien mit Diagramm-Unterstützung.
 - Da `![[…]]` vorher kein gültiges Markdown war, wird kein bestehendes Dokument
   umgedeutet.
 
+#### shields.io-Badges
+- `![…](https://img.shields.io/…)` wird in GUI und Server angezeigt; alle anderen
+  entfernten Bilder bleiben in beiden blockiert.
+- **Server:** die CSP erlaubt gezielt `https://img.shields.io` (siehe
+  „Sicherheit (Server)“).
+- **GUI:** `LocalContentCanAccessRemoteUrls` ist aktiviert, weil die Vorschau per
+  `setHtml` mit `file://`-Basis läuft und Chromium sonst jedes entfernte Bild
+  blockiert. Ein `QWebEngineUrlRequestInterceptor` (`RemoteImageGuard`) lässt
+  Bild-Requests nur an `img.shields.io` durch, damit eine fremde `.md` nicht
+  beliebige Hosts kontaktieren kann.
+
 #### Wiki-Links `[[…]]`
 - `WikiLinkProcessor` in `md_render.py`, Priorität **170** – also **hinter** dem
   Bild-Embed (175), damit `![[bild.png]]` weiterhin als Bild gilt und nicht als
@@ -256,9 +267,12 @@ Die .exe befindet sich danach in `dist/md-dis/`.
   innerhalb von `Root` akzeptiert hätte. Pfade mit versteckten Segmenten
   (`.git`, `.venv`, `.env`) werden zusätzlich blockiert.
 - **CSP & Header:** jede Antwort trägt `Content-Security-Policy`
-  (`script-src 'self'`, `img-src 'self' data:`) und `X-Content-Type-Options:
-  nosniff`; der Watch-Client lädt sein Skript über `GET /watch.js` (Pfad per
-  `data-path`). Fremdbilder in einem Dokument werden damit **nicht** geladen.
+  (`script-src 'self'`, `img-src 'self' data: https://img.shields.io`) und
+  `X-Content-Type-Options: nosniff`; der Watch-Client lädt sein Skript über
+  `GET /watch.js` (Pfad per `data-path`). Fremdbilder in einem Dokument werden
+  damit **nicht** geladen – Ausnahme sind gezielt shields.io-Badges
+  (`![…](https://img.shields.io/…)`), die als einziger externer Bild-Host
+  erlaubt sind.
 - **Größen-/Kodier-Grenzen:** Markdown über 10 MB → 413; gelesen wird mit
   `utf-8-sig` und `errors="replace"` (BOM-tolerant, kein 500er bei kaputten
   Bytes). Der Index wird kurz zwischengespeichert, damit wiederholte Aufrufe
