@@ -840,10 +840,12 @@ class MarkdownViewer(QMainWindow):
         self.search_close_btn.mousePressEvent = lambda _: self._toggle_search()
         self.search_close_btn.setVisible(False)
 
-        self.statusBar().addWidget(self.search_input)
-        self.statusBar().addWidget(self.search_prev_btn)
-        self.statusBar().addWidget(self.search_next_btn)
-        self.statusBar().addWidget(self.search_close_btn)
+        # Permanente Widgets: normale Widgets teilen sich den Platz mit
+        # showMessage()-Texten (Pfad scheint durch bzw. Suche verschwindet).
+        self.statusBar().addPermanentWidget(self.search_input)
+        self.statusBar().addPermanentWidget(self.search_prev_btn)
+        self.statusBar().addPermanentWidget(self.search_next_btn)
+        self.statusBar().addPermanentWidget(self.search_close_btn)
 
         # Escape to close search
         esc = QShortcut(QKeySequence("Escape"), self)
