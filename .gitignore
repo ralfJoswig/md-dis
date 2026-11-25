@@ -27,6 +27,8 @@ md-dis.ini
 # Lokale Startskripte
 start.cmd
 md-dis.bat
+start-claude.bat
+start-claude.ps1
 
 # openwiki
 openwiki/
